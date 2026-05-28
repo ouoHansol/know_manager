@@ -21,6 +21,8 @@ import "./styles.css";
 
 const STORAGE_KEY = "knou-essential-manager-v2";
 const MEMO_STORAGE_KEY = "knou-essential-memos-v1";
+const PROFILE_STORAGE_KEY = "knou-essential-profile-v1";
+const CREDENTIAL_STORAGE_KEY = "knou-essential-credentials-v1";
 
 type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "exam" | "notice";
 type Priority = "high" | "normal" | "low";
@@ -67,6 +69,13 @@ type MemoItem = {
 type SyncedPayload = {
   events: KnouEvent[];
   profile?: Profile;
+  errors?: string[];
+  syncedAt?: string;
+};
+
+type SyncCredentials = {
+  id: string;
+  password: string;
 };
 
 type SetEvents = React.Dispatch<React.SetStateAction<KnouEvent[]>>;
@@ -86,7 +95,7 @@ function App() {
   const [events, setEvents] = useStoredEvents();
   const [memos, setMemos] = useStoredMemos();
   const [categoryView, setCategoryView] = useState<CategoryView>("all");
-  const [profile, setProfile] = useState<Profile>({});
+  const [profile, setProfile] = useState<Profile>(() => loadStoredProfile());
   const [completionView, setCompletionView] = useState<CompletionView>("open");
   const [addOpen, setAddOpen] = useState(false);
   const [memoOpen, setMemoOpen] = useState(false);
@@ -99,13 +108,19 @@ function App() {
   useEffect(() => {
     loadSyncedPayload().then((payload) => {
       if (!payload) return;
-      setProfile(payload.profile || {});
-      setEvents((current) => {
-        const manualEvents = current.filter((event) => !String(event.id).startsWith("knou-"));
-        return [...manualEvents, ...(payload.events || [])];
-      });
+      applySyncedPayload(payload);
     });
   }, [setEvents]);
+
+  function applySyncedPayload(payload: SyncedPayload) {
+    const nextProfile = payload.profile || {};
+    setProfile(nextProfile);
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(nextProfile));
+    setEvents((current) => {
+      const manualEvents = current.filter((event) => !String(event.id).startsWith("knou-"));
+      return [...manualEvents, ...(payload.events || [])];
+    });
+  }
 
   const scheduleEvents = useMemo(() => events.filter((event) => event.type !== "notice" && event.type !== "grade"), [events]);
   const notices = useMemo(() => events.filter((event) => event.type === "notice").sort(sortByNewest), [events]);
@@ -320,7 +335,7 @@ function App() {
       <AddDialog open={addOpen} onClose={() => setAddOpen(false)} onSubmit={addEvent} />
       <MemoDialog open={memoOpen} onClose={() => setMemoOpen(false)} onSubmit={addMemo} />
       <MemoDialog memo={editingMemo} open={Boolean(editingMemo)} onClose={() => setEditingMemo(null)} onSubmit={saveMemo} onDelete={deleteMemo} />
-      <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
+      <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} onSynced={applySyncedPayload} />
       <EditDialog event={editing} onClose={() => setEditing(null)} onSubmit={saveEdit} onDelete={deleteEvent} />
       <NoticeDialog notice={selectedNotice} onClose={() => setSelectedNotice(null)} />
       <GradeDialog open={gradeOpen} profile={profile} gradeEvents={gradeEvents} onClose={() => setGradeOpen(false)} />
@@ -383,6 +398,30 @@ function useStoredMemos(): [MemoItem[], React.Dispatch<React.SetStateAction<Memo
   }, []);
 
   return [memos, setMemos];
+}
+
+function loadStoredProfile(): Profile {
+  const saved = localStorage.getItem(PROFILE_STORAGE_KEY);
+  if (!saved) return {};
+  try {
+    return JSON.parse(saved);
+  } catch {
+    return {};
+  }
+}
+
+function loadStoredCredentials(): SyncCredentials {
+  const saved = localStorage.getItem(CREDENTIAL_STORAGE_KEY);
+  if (!saved) return { id: "", password: "" };
+  try {
+    const parsed = JSON.parse(saved);
+    return {
+      id: typeof parsed.id === "string" ? parsed.id : "",
+      password: typeof parsed.password === "string" ? parsed.password : "",
+    };
+  } catch {
+    return { id: "", password: "" };
+  }
 }
 
 function Panel({
@@ -800,17 +839,84 @@ function EventForm({
   );
 }
 
-function SyncDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+function SyncDialog({ open, onClose, onSynced }: { open: boolean; onClose: () => void; onSynced: (payload: SyncedPayload) => void }) {
+  const [running, setRunning] = useState(false);
+  const [message, setMessage] = useState("");
+  const [remember, setRemember] = useState(true);
+  const [credentials, setCredentials] = useState<SyncCredentials>(() => loadStoredCredentials());
+
+  async function syncNow(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRunning(true);
+    setMessage("동기화 중입니다. 방통대 로그인과 페이지 조회가 끝날 때까지 잠시 기다려 주세요.");
+
+    try {
+      const formData = new FormData(event.currentTarget);
+      const nextCredentials = {
+        id: stringifyFormValue(formData.get("id")).trim(),
+        password: stringifyFormValue(formData.get("password")),
+      };
+
+      const response = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextCredentials),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "동기화에 실패했습니다.");
+
+      if (remember) {
+        localStorage.setItem(CREDENTIAL_STORAGE_KEY, JSON.stringify(nextCredentials));
+      } else {
+        localStorage.removeItem(CREDENTIAL_STORAGE_KEY);
+      }
+
+      setCredentials(nextCredentials);
+      onSynced(payload);
+      setMessage(`동기화 완료: ${payload.events?.length || 0}개 정보를 가져왔습니다.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
   return (
     <Modal open={open} onClose={onClose}>
       <div className="dialog-card">
         <div className="panel-heading">
-          <h2>자동 동기화</h2>
+          <h2>내 계정으로 동기화</h2>
           <button className="icon-button" onClick={onClose} aria-label="닫기">
             <X />
           </button>
         </div>
-        <p className="hint">계정정보는 로컬 .env에 있고 앱 화면에는 표시하지 않습니다. 최신 정보 갱신은 터미널에서 npm run sync를 실행하면 됩니다.</p>
+        <p className="hint">
+          아이디와 비밀번호는 이 브라우저에만 저장됩니다. 동기화 요청 때만 Vercel API로 전달되고 저장소나 서버 환경변수에는 저장하지 않습니다.
+        </p>
+        <form className="event-form" onSubmit={syncNow}>
+          <label>
+            방통대 아이디
+            <input name="id" autoComplete="username" value={credentials.id} onChange={(event) => setCredentials({ ...credentials, id: event.target.value })} />
+          </label>
+          <label>
+            비밀번호
+            <input
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              value={credentials.password}
+              onChange={(event) => setCredentials({ ...credentials, password: event.target.value })}
+            />
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
+            이 브라우저에 계정정보 저장
+          </label>
+          <button className="primary-button" type="submit" disabled={running}>
+            <RefreshCw /> {running ? "동기화 중" : "지금 동기화"}
+          </button>
+        </form>
+        {message ? <p className="sync-message">{message}</p> : null}
         <div className="links-panel">
           <a href="https://www.knou.ac.kr" target="_blank" rel="noreferrer">
             <ExternalLink /> 방통대 대표 홈페이지

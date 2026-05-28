@@ -12,7 +12,7 @@
     "inspect": "node scripts/inspect-knou.mjs",
     "discover": "node scripts/discover-links.mjs",
     "typecheck": "tsc --noEmit",
-    "check": "node --check scripts/knou-sync.mjs && npm run typecheck && npm run build"
+    "check": "node --check scripts/knou-sync.mjs && node --check api/sync.js && npm run typecheck && npm run build"
   },
   "keywords": [],
   "author": "",

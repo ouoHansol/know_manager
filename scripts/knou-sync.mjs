@@ -3,12 +3,12 @@ import { chromium } from "playwright";
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outputPath = join(root, "public", "data", "knou-events.json");
 
-const config = {
+const defaultConfig = {
   id: process.env.KNOU_ID,
   password: process.env.KNOU_PASSWORD,
   headless: process.env.KNOU_HEADLESS !== "false",
@@ -20,67 +20,81 @@ const config = {
     .filter(Boolean),
 };
 
-if (!config.id || !config.password) {
-  console.error("KNOU_ID/KNOU_PASSWORD가 없습니다. .env 파일을 채우세요.");
-  process.exit(1);
-}
+let config = defaultConfig;
 
-await mkdir(dirname(outputPath), { recursive: true });
+export async function collectKnouData(options = {}) {
+  config = {
+    ...defaultConfig,
+    ...options,
+    extraUrls: Array.isArray(options.extraUrls) ? options.extraUrls : defaultConfig.extraUrls,
+    headless: options.headless ?? defaultConfig.headless,
+  };
 
-const browser = await chromium.launch({ headless: config.headless });
-const context = await browser.newContext({
-  locale: "ko-KR",
-  viewport: { width: 1440, height: 1100 },
-});
-const page = await context.newPage();
-
-const collected = [];
-const errors = [];
-let profile = {};
-
-try {
-  await openAndMaybeLogin(page, "https://ucampus.knou.ac.kr/ekp/user/login/retrieveULOLogin.do");
-  profile = await extractProfile(page);
-  await collectFromCurrentPage(page, "U-KNOU", collected);
-  await collectNotices(page, "U-KNOU 공지", collected);
-
-  const mobileProfile = await collectMobileKnou(page, collected);
-  profile = { ...profile, ...mobileProfile };
-  await collectExamApplicationStats(page, collected);
-
-  await openAndMaybeLogin(page, config.startUrl);
-  await collectNotices(page, "방통대 공지", collected);
-
-  for (const url of config.extraUrls) {
-    await openAndMaybeLogin(page, url);
-    await collectFromCurrentPage(page, url, collected);
+  if (!config.id || !config.password) {
+    throw new Error("KNOU_ID/KNOU_PASSWORD가 없습니다.");
   }
-} catch (error) {
-  errors.push(error instanceof Error ? error.message : String(error));
-} finally {
-  await browser.close();
+
+  const browser = await chromium.launch({ headless: config.headless });
+  const context = await browser.newContext({
+    locale: "ko-KR",
+    viewport: { width: 1440, height: 1100 },
+  });
+  const page = await context.newPage();
+
+  const collected = [];
+  const errors = [];
+  let profile = {};
+
+  try {
+    await openAndMaybeLogin(page, "https://ucampus.knou.ac.kr/ekp/user/login/retrieveULOLogin.do");
+    profile = await extractProfile(page);
+    await collectFromCurrentPage(page, "U-KNOU", collected);
+    await collectNotices(page, "U-KNOU 공지", collected);
+
+    const mobileProfile = await collectMobileKnou(page, collected);
+    profile = { ...profile, ...mobileProfile };
+    await collectExamApplicationStats(page, collected);
+
+    await openAndMaybeLogin(page, config.startUrl);
+    await collectNotices(page, "방통대 공지", collected);
+
+    for (const url of config.extraUrls) {
+      await openAndMaybeLogin(page, url);
+      await collectFromCurrentPage(page, url, collected);
+    }
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  } finally {
+    await browser.close();
+  }
+
+  const events = dedupeEvents(collected);
+  return {
+    syncedAt: new Date().toISOString(),
+    source: "knou-playwright",
+    errors,
+    events,
+    profile,
+  };
 }
 
-const events = dedupeEvents(collected);
-await writeFile(
-  outputPath,
-  JSON.stringify(
-    {
-      syncedAt: new Date().toISOString(),
-      source: "knou-playwright",
-      errors,
-      events,
-      profile,
-    },
-    null,
-    2
-  ),
-  "utf-8"
-);
+async function runCliSync() {
+  try {
+    const payload = await collectKnouData();
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, JSON.stringify(payload, null, 2), "utf-8");
+    console.log(`수집 완료: ${payload.events.length}개 -> ${outputPath}`);
+    if (payload.errors.length) {
+      console.log(`주의: ${payload.errors.join(" | ")}`);
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
 
-console.log(`수집 완료: ${events.length}개 -> ${outputPath}`);
-if (errors.length) {
-  console.log(`주의: ${errors.join(" | ")}`);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runCliSync();
 }
 
 async function openAndLogin(page, url) {
