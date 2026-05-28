@@ -1,0 +1,9 @@
+.env
+data/*
+!data/.gitkeep
+public/data/*.json
+!public/data/.gitkeep
+node_modules/
+dist/
+playwright-report/
+test-results/
