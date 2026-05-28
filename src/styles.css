@@ -477,6 +477,7 @@ a svg,
 }
 
 .identity-card,
+.credit-card,
 .grade-card {
   width: 100%;
   border: 1px solid var(--line);
@@ -495,6 +496,7 @@ a svg,
 }
 
 .identity-card svg,
+.credit-card svg,
 .grade-card svg {
   width: 20px;
   height: 20px;
@@ -502,6 +504,7 @@ a svg,
 }
 
 .identity-card strong,
+.credit-card strong,
 .grade-card strong {
   display: block;
   color: var(--text);
@@ -510,12 +513,17 @@ a svg,
 }
 
 .identity-card span,
+.credit-card span,
 .grade-card span {
   display: block;
   margin-top: 4px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.credit-card {
+  margin-bottom: 9px;
 }
 
 .grade-card:hover {

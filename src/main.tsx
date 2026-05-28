@@ -431,11 +431,18 @@ function ProfilePanel({
           <span>{profile.department || "학과 수집 전"}</span>
         </div>
       </div>
-      <button className="grade-card" onClick={onOpenGrades}>
+      <div className="credit-card">
         <GraduationCap />
         <div>
-          <span>총학점 / 성적</span>
-          <strong>{profile.credits || profile.grade || (gradeEvents.length ? `${gradeEvents.length}개 항목` : "수집 전")}</strong>
+          <span>나의 총 학점</span>
+          <strong>{formatCredits(profile.credits)}</strong>
+        </div>
+      </div>
+      <button className="grade-card" onClick={onOpenGrades}>
+        <BookOpen />
+        <div>
+          <span>현재 수강과목 성적</span>
+          <strong>{countScoredGrades(gradeEvents)}개 채점됨</strong>
         </div>
       </button>
     </section>
@@ -691,7 +698,7 @@ function GradeDialog({
         <div className="panel-heading">
           <div>
             <p className="eyebrow">grade</p>
-            <h2>학점 / 성적</h2>
+            <h2>현재 수강과목 성적</h2>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="닫기">
             <X />
@@ -700,20 +707,23 @@ function GradeDialog({
         <div className="notice-summary">
           <BookOpen />
           <div>
-            <strong>{profile.credits || profile.grade || "학점/성적 상세 수집 전"}</strong>
+            <strong>{formatCredits(profile.credits)}</strong>
             <span>{profile.name || ""} {profile.department || ""}</span>
           </div>
         </div>
-        {!gradeEvents.length ? (
-          <p className="hint">성적/학점 상세 화면 URL을 KNOU_EXTRA_URLS에 추가하면 동기화 후 여기에 표시됩니다.</p>
+        {countScoredGrades(gradeEvents) === 0 ? (
+          <p className="hint">아직 채점된 점수가 없습니다.</p>
         ) : (
           <div className="event-list">
-            {gradeEvents.map((event) => (
-              <div key={event.id} className="notice-summary-point">
-                <span>{formatDate(event)}</span>
-                <strong>{event.title}</strong>
-              </div>
-            ))}
+            {gradeEvents.filter(hasGradeScore).map((event) => {
+              const score = getGradeScore(event);
+              return (
+                <div key={event.id} className="notice-summary-point">
+                  <span>{event.title}</span>
+                  <strong>{score || "점수 확인 필요"}</strong>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -839,6 +849,26 @@ function getNoticeSummaryItems(notice: KnouEvent): NoticeSummaryItem[] {
 
 function stringifyFormValue(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value : "";
+}
+
+function formatCredits(value?: string) {
+  const match = value?.match(/\d+(?:\.\d+)?/);
+  return match ? `${match[0]}학점` : "수집 전";
+}
+
+function countScoredGrades(events: KnouEvent[]) {
+  return events.filter(hasGradeScore).length;
+}
+
+function hasGradeScore(event: KnouEvent) {
+  return Boolean(getGradeScore(event));
+}
+
+function getGradeScore(event: KnouEvent) {
+  const text = `${event.title} ${event.note || ""}`;
+  const score = text.match(/(?:점수|취득점수|평점|등급)\s*[:：]?\s*([A-F][+0-]?|\d{1,3}(?:\.\d+)?점?)/i)?.[1];
+  if (!score) return "";
+  return score.endsWith("점") || /^[A-F]/i.test(score) ? score : `${score}점`;
 }
 
 function isEventType(value: FormDataEntryValue | null): value is EventType {
