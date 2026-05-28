@@ -20,10 +20,10 @@ import "./styles.css";
 
 const STORAGE_KEY = "knou-essential-manager-v2";
 
-type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "notice";
+type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "exam" | "notice";
 type Priority = "high" | "normal" | "low";
 type EventStatus = "open" | "missed" | "submitted" | "graded" | "available" | "complete";
-type CategoryView = "course" | "assignment" | "attendance";
+type CategoryView = "all" | "course" | "assignment" | "attendance" | "exam" | "grade";
 type CompletionView = "open" | "done";
 
 type NoticeSummaryItem = {
@@ -67,12 +67,13 @@ const typeLabels: Record<EventType, string> = {
   course: "수강정보",
   substitute: "출석대체",
   grade: "학점",
+  exam: "시험",
   notice: "공지",
 };
 
 function App() {
   const [events, setEvents] = useStoredEvents();
-  const [categoryView, setCategoryView] = useState<CategoryView>("course");
+  const [categoryView, setCategoryView] = useState<CategoryView>("all");
   const [profile, setProfile] = useState<Profile>({});
   const [completionView, setCompletionView] = useState<CompletionView>("open");
   const [addOpen, setAddOpen] = useState(false);
@@ -236,27 +237,18 @@ function App() {
           </aside>
           <div className="work-area">
             <Panel
-              eyebrow="priority"
-              title="지금 봐야 할 것"
-              action={
-                <button className="ghost-button" onClick={clearDone}>
-                  <Trash2 /> 완료 정리
-                </button>
-              }
-            >
-              <EventList events={alerts} emptyText="미완료 경고가 없습니다." onToggle={toggleDone} onEdit={setEditing} />
-            </Panel>
-
-            <Panel
               eyebrow="schedule"
               title="필수 일정"
               action={
                 <div className="toolbar">
                   <div className="segmented category-tabs" role="tablist" aria-label="일정 유형">
                     {([
+                      ["all", "전체"],
                       ["course", "수강"],
                       ["assignment", "과제물"],
                       ["attendance", "출석"],
+                      ["exam", "시험"],
+                      ["grade", "학점"],
                     ] satisfies Array<[CategoryView, string]>).map(([value, label]) => (
                       <button key={value} className={`filter ${categoryView === value ? "active" : ""}`} onClick={() => setCategoryView(value)}>
                         {label}
@@ -273,6 +265,9 @@ function App() {
                       </button>
                     ))}
                   </div>
+                  <button className="ghost-button" onClick={clearDone}>
+                    <Trash2 /> 완료 정리
+                  </button>
                 </div>
               }
             >
@@ -298,9 +293,12 @@ function App() {
 
 function matchesCategoryView(categoryView: CategoryView) {
   return (event: KnouEvent) => {
-    if (categoryView === "course") return event.type === "course" || event.type === "registration" || event.type === "grade";
+    if (categoryView === "all") return true;
+    if (categoryView === "course") return event.type === "course" || event.type === "registration";
     if (categoryView === "assignment") return event.type === "assignment";
     if (categoryView === "attendance") return event.type === "attendance" || event.type === "substitute";
+    if (categoryView === "exam") return event.type === "exam";
+    if (categoryView === "grade") return event.type === "grade";
     return true;
   };
 }
@@ -572,6 +570,7 @@ function EventForm({
           <option value="substitute">출석대체</option>
           <option value="registration">수강신청</option>
           <option value="course">수강정보</option>
+          <option value="exam">시험</option>
           <option value="grade">학점</option>
           <option value="notice">공지</option>
         </select>
@@ -787,6 +786,7 @@ function sortByUrgency(a: KnouEvent, b: KnouEvent) {
 
 function statusClass(event: KnouEvent) {
   if (isMissedEvent(event)) return "overdue";
+  if (event.done || event.status === "complete") return "done";
   const diff = event.diff ?? getDayDiff(event.date);
   if (diff < 0) return "overdue";
   if (diff <= 7) return "soon";
@@ -798,6 +798,7 @@ function statusText(event: KnouEvent) {
   if (event.status === "submitted") return "제출완료";
   if (event.status === "graded") return "평가완료";
   if (event.status === "available") return "신청가능";
+  if (event.status === "complete" || event.done) return "완료";
   const diff = event.diff ?? getDayDiff(event.date);
   if (diff < 0) return `${Math.abs(diff)}일 지연`;
   if (diff === 0) return "오늘";

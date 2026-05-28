@@ -44,6 +44,9 @@ try {
   await collectFromCurrentPage(page, "U-KNOU", collected);
   await collectNotices(page, "U-KNOU 공지", collected);
 
+  const mobileProfile = await collectMobileKnou(page, collected);
+  profile = { ...profile, ...mobileProfile };
+
   await openAndMaybeLogin(page, config.startUrl);
   await collectNotices(page, "방통대 공지", collected);
 
@@ -230,6 +233,263 @@ async function collectNotices(page, source, collected) {
       });
     }
   }
+}
+
+async function collectMobileKnou(page, collected) {
+  const targets = [
+    ["https://m.knou.ac.kr/", "MyKNOU"],
+    ["https://m.knou.ac.kr/assignment/submit", "과제 제출"],
+    ["https://m.knou.ac.kr/assignment/class-attendance", "출석수업과제 제출"],
+    ["https://m.knou.ac.kr/attendance/schedule-place-inquiry", "출석수업 시간표"],
+    ["https://m.knou.ac.kr/attendance/change-type", "출석수업 유형 변경"],
+    ["https://m.knou.ac.kr/ale/substitute-application", "대체이수 신청"],
+    ["https://m.knou.ac.kr/arc", "성적"],
+    ["https://m.knou.ac.kr/agm", "졸업/학점"],
+    ["https://m.knou.ac.kr/asm/academic-record", "학적 조회"],
+    ["https://m.knou.ac.kr/dashboard/course-list", "수강목록"],
+  ];
+  let profile = {};
+
+  for (const [url, source] of targets) {
+    await openAndMaybeLogin(page, url);
+    await page.waitForTimeout(700);
+    const data = await extractMobilePageData(page);
+    profile = { ...profile, ...extractMobileProfile(data.text) };
+
+    if (url.includes("/assignment/submit")) {
+      collected.push(...parseMobileAssignmentCards(data.assignmentCards, "assignment", "중간 과제물", source, url));
+      collected.push(...parseMobileAssignmentCards(data.assignmentCards, "exam", "중간평가 과제물", source, url));
+    } else if (url.includes("/assignment/class-attendance")) {
+      collected.push(...parseMobileAssignmentCards(data.assignmentCards, "substitute", "출석수업 과제물", source, url));
+      collected.push(...parseMobileAssignmentCards(data.assignmentCards, "exam", "중간평가 출석과제물", source, url));
+    } else if (url.includes("/attendance/schedule-place-inquiry")) {
+      collected.push(...parseMobileAttendance(data.text, source, url));
+    } else if (url.includes("/attendance/change-type")) {
+      collected.push(...parseUnavailableNotice(data.text, "attendance", "출석수업 유형 변경", source, url));
+    } else if (url.includes("/ale/substitute-application")) {
+      collected.push(...parseUnavailableNotice(data.text, "substitute", "대체이수 신청", source, url));
+    } else if (url.includes("/arc")) {
+      collected.push(...parseMobileGrades(data.text, source, url));
+    } else if (url.includes("/agm")) {
+      profile = { ...profile, ...extractGraduationProfile(data.text) };
+    } else if (url.includes("/dashboard/course-list")) {
+      collected.push(...parseMobileCourseList(data.text, source, url));
+    }
+  }
+
+  return profile;
+}
+
+async function extractMobilePageData(page) {
+  return await page.evaluate(() => ({
+    text: document.body?.innerText || "",
+    assignmentCards: [...document.querySelectorAll(".knou_assignment_card")].map((card) => ({
+      text: card.innerText || "",
+      activeStatus: card.querySelector(".knou_stage_progress_status.active")?.innerText?.trim() || "",
+      link: card.querySelector("a")?.href || location.href,
+    })),
+  }));
+}
+
+function extractMobileProfile(text) {
+  const profile = {};
+  const name = text.match(/([가-힣]{2,5})\s*학우님/)?.[1] || text.match(/성명\s*\n\s*([^\n]+)/)?.[1]?.trim();
+  const department = text.match(/계정 설정\s*\n\s*([^\n|]+학과)/)?.[1]?.trim() || text.match(/학과\s*\n\s*([^\n]+)/)?.[1]?.trim();
+  if (name) profile.name = name;
+  if (department) profile.department = department;
+  const credits = text.match(/(취득학점|총학점|이수학점)\s*\n?\s*([0-9.]+\s*학점?)/)?.[2]?.trim();
+  if (credits) profile.credits = credits;
+  const grade = text.match(/(평점평균|총평점|평균평점)\s*\n?\s*([0-9.]+)/)?.[2]?.trim();
+  if (grade) profile.grade = grade;
+  return profile;
+}
+
+function extractGraduationProfile(text) {
+  const lines = normalizeLines(text);
+  const profile = {};
+  const creditIndex = lines.findIndex((line) => line === "취득학점");
+  if (creditIndex >= 0) {
+    const totalLine = lines.slice(creditIndex + 1, creditIndex + 5).find((line) => /총\s*\d+학점/.test(line));
+    if (totalLine) profile.credits = totalLine.replace(/\s+/g, " ");
+  }
+  const avgIndex = lines.findIndex((line) => /평점평균/.test(line));
+  if (avgIndex >= 0) {
+    profile.grade = lines[avgIndex].replace(/\s+/g, " ");
+  }
+  const conversionIndex = lines.findIndex((line) => /백점환산/.test(line));
+  if (conversionIndex >= 0) {
+    profile.grade = [profile.grade, lines[conversionIndex].replace(/\s+/g, " ")].filter(Boolean).join(" / ");
+  }
+  return profile;
+}
+
+function parseMobileAssignmentCards(cards, type, label, source, url) {
+  return cards
+    .map((card) => {
+      const lines = normalizeLines(card.text);
+      const receiptIndex = lines.findIndex((line) => line === "접수번호");
+      const course = lines[receiptIndex + 2] || lines.find((line) => isCourseLike(line)) || label;
+      const periodLine = lines.find((line) => /20\d{2}[./-]\d{1,2}[./-]\d{1,2}.*~/.test(line)) || "";
+      const dates = [...periodLine.matchAll(/20\d{2}[./-]\d{1,2}[./-]\d{1,2}/g)].map((match) => normalizeDate(match[0]));
+      const dueDate = dates.at(-1);
+      if (!dueDate) return null;
+      const status = statusFromActiveStage(card.activeStatus, dueDate);
+      const time = periodLine.match(/~\s*([01]?\d|2[0-3]):([0-5]\d)/)?.[0]?.replace("~", "").trim() || "23:59";
+      return {
+        id: stableId(`mobile-assignment|${type}|${course}|${dueDate}|${label}`),
+        type,
+        title: `${course} ${label}`,
+        date: dueDate,
+        time,
+        priority: status === "missed" ? "high" : "normal",
+        note: `${source}: 현재상태 ${card.activeStatus || "확인필요"} / ${periodLine}`,
+        link: card.link || url,
+        status,
+        done: ["submitted", "graded", "complete"].includes(status),
+      };
+    })
+    .filter(Boolean);
+}
+
+function statusFromActiveStage(activeStatus, dueDate) {
+  if (/평가완료/.test(activeStatus)) return "graded";
+  if (/제출완료|평가중/.test(activeStatus)) return "submitted";
+  if (/미제출/.test(activeStatus) && new Date(`${dueDate}T23:59:59`) < new Date()) return "missed";
+  if (/미제출/.test(activeStatus)) return "open";
+  return inferStatus(activeStatus || "", dueDate);
+}
+
+function parseMobileAttendance(text, source, url) {
+  const lines = normalizeLines(text);
+  const events = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^수업 일시/.test(lines[index])) continue;
+    const date = findDate(lines[index]);
+    if (!date) continue;
+    const course = findPreviousCourseName(lines, index);
+    const place = lines.slice(index + 1, index + 5).find((line) => /^장소 및 강의실/.test(line)) || "";
+    const professor = lines.slice(index + 1, index + 6).find((line) => /^담당교수/.test(line)) || "";
+    const isPast = new Date(`${date.date}T23:59:59`) < new Date();
+    events.push({
+      id: stableId(`mobile-attendance|${course}|${date.date}`),
+      type: "attendance",
+      title: `${course} 출석수업`,
+      date: date.date,
+      time: lines[index].match(/\(([0-2]?\d:[0-5]\d)/)?.[1] || "",
+      priority: isPast ? "normal" : "high",
+      note: `${source}: ${lines[index]} ${place} ${professor}`.trim(),
+      link: url,
+      status: isPast ? "complete" : "open",
+      done: isPast,
+    });
+  }
+  return events;
+}
+
+function parseUnavailableNotice(text, type, title, source, url) {
+  if (!/기간이 아닙니다|업무처리기간이 아닙니다/.test(text)) return [];
+  return [
+    {
+      id: stableId(`mobile-unavailable|${type}|${title}|${todayIso()}`),
+      type,
+      title,
+      date: todayIso(),
+      time: "",
+      priority: "normal",
+      note: `${source}: 현재 신청/변경 기간이 아닙니다.`,
+      link: url,
+      status: "complete",
+      done: true,
+    },
+  ];
+}
+
+function parseMobileGrades(text, source, url) {
+  const lines = normalizeLines(text);
+  const yearTerm = lines.find((line) => /20\d{2}학년도\s+\d학기/.test(line)) || "";
+  const courseNames = unique(lines.filter((line) => isCourseLike(line)));
+  return courseNames.map((course) => ({
+    id: stableId(`mobile-grade|${course}|${yearTerm}`),
+    type: "grade",
+    title: `${course} 성적`,
+    date: todayIso(),
+    time: "",
+    priority: "normal",
+    note: `${source}: ${yearTerm || "현재학기"} 성적 조회 대상`,
+    link: url,
+    status: "open",
+    done: false,
+  }));
+}
+
+function parseMobileCourseList(text, source, url) {
+  const lines = normalizeLines(text);
+  const yearTerm = lines.find((line) => /20\d{2}학년도\s+\d학기/.test(line)) || "";
+  const courseNames = unique(lines.filter((line) => isCourseLike(line)));
+  const dueLine = lines.find((line) => /형성평가.*20\d{2}[./-]\d{1,2}[./-]\d{1,2}/.test(line));
+  const dueDate = dueLine ? findDate(dueLine)?.date : null;
+  const courseEvents = courseNames.map((course) => ({
+    id: stableId(`mobile-course|${course}|${yearTerm}`),
+    type: "course",
+    title: `${course} 수강정보`,
+    date: dueDate || todayIso(),
+    time: dueDate ? "23:59" : "",
+    priority: "normal",
+    note: `${source}: ${yearTerm || "현재학기"} 수강 과목`,
+    link: url,
+    status: "open",
+    done: false,
+  }));
+  const examEvents = courseNames.flatMap((course, index) => {
+    const courseIndex = lines.findIndex((line) => line === course);
+    const nextCourseIndex = courseNames[index + 1] ? lines.findIndex((line, lineIndex) => lineIndex > courseIndex && line === courseNames[index + 1]) : -1;
+    const blockEnd = nextCourseIndex > courseIndex ? nextCourseIndex : courseIndex + 10;
+    const block = lines.slice(courseIndex, blockEnd).join(" ");
+    const events = [];
+    if (/기말\s*시험/.test(block)) {
+      events.push({
+        id: stableId(`mobile-final-exam|${course}|${yearTerm}`),
+        type: "exam",
+        title: `${course} 기말 시험`,
+        date: todayIso(),
+        time: "",
+        priority: "high",
+        note: `${source}: ${yearTerm || "현재학기"} 기말평가 방식 - 기말 시험. 상세 일시는 학교 화면에서 아직 비어 있거나 확정 전입니다.`,
+        link: url,
+        status: "open",
+        done: false,
+      });
+    }
+    if (/출석과제물/.test(block)) {
+      events.push({
+        id: stableId(`mobile-mid-exam|${course}|attendance-assignment|${yearTerm}`),
+        type: "exam",
+        title: `${course} 중간평가 - 출석과제물`,
+        date: todayIso(),
+        time: "",
+        priority: "normal",
+        note: `${source}: ${yearTerm || "현재학기"} 중간평가 방식 - 출석과제물`,
+        link: url,
+        status: "open",
+        done: false,
+      });
+    } else if (/과제물/.test(block)) {
+      events.push({
+        id: stableId(`mobile-mid-exam|${course}|assignment|${yearTerm}`),
+        type: "exam",
+        title: `${course} 중간평가 - 과제물`,
+        date: todayIso(),
+        time: "",
+        priority: "normal",
+        note: `${source}: ${yearTerm || "현재학기"} 중간평가 방식 - 과제물`,
+        link: url,
+        status: "open",
+        done: false,
+      });
+    }
+    return events;
+  });
+  return [...courseEvents, ...examEvents];
 }
 
 async function extractProfile(page) {
@@ -459,6 +719,34 @@ function isChromeText(value) {
   return /^(본문바로가기|찾기|마이페이지|학습목록|학습현황|수강 강의|내용보기|더보기|새알림|\d+\s*건)$/.test(value);
 }
 
+function normalizeLines(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function unique(values) {
+  return [...new Set(values)];
+}
+
+function isCourseLike(value) {
+  if (!value || value.length > 30) return false;
+  if (isChromeText(value)) return false;
+  if (/(MyKNOU|과제물|성적|수강목록|출석수업|현재학기|조회|연도|학기|공지|시험|제출|신청|장소|유형|평가|학점|등록|메뉴|바로가기|학우님|컴퓨터과학과)/.test(value)) {
+    return false;
+  }
+  if (/\d학년|\d{3,}/.test(value)) return false;
+  return /(컴퓨터의이해|파이썬프로그래밍기초|데이터정보처리입문|테마가있는음악여행|환경과건강|생활과건강|기초$|입문$|여행$|건강$|이해$)/.test(value);
+}
+
+function findPreviousCourseName(lines, index) {
+  for (let cursor = index - 1; cursor >= Math.max(0, index - 8); cursor -= 1) {
+    if (isCourseLike(lines[cursor])) return lines[cursor];
+  }
+  return "출석수업";
+}
+
 function normalizeDate(value) {
   const match = value.match(/(?<year>20\d{2})[-/.](?<month>\d{1,2})[-/.](?<day>\d{1,2})/);
   if (!match?.groups) return value;
@@ -490,6 +778,7 @@ function findDate(value) {
 function inferType(value) {
   if (/(수강\s*신청|수강변경|신청기간)/.test(value)) return "registration";
   if (/(출석\s*대체|대체\s*과제|대체시험|대체\s*신청)/.test(value)) return "substitute";
+  if (/(중간시험|기말시험|중간평가|기말평가|시험)/.test(value)) return "exam";
   if (/(성적|학점|평점|취득학점|이수학점)/.test(value)) return "grade";
   if (/(출석|강의실|지역대학|화상강의)/.test(value)) return "attendance";
   if (/(강의|수강|진도|학습)/.test(value)) return "course";
@@ -513,6 +802,7 @@ function typeLabel(type) {
     course: "수강정보",
     substitute: "출석대체",
     grade: "학점",
+    exam: "시험",
     notice: "공지",
   }[type];
 }

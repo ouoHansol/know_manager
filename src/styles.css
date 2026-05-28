@@ -256,7 +256,16 @@ a svg,
 }
 
 .segmented.category-tabs {
-  grid-template-columns: repeat(3, minmax(78px, auto));
+  display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+}
+
+.segmented.category-tabs .filter {
+  flex: 0 0 auto;
+  min-width: 74px;
 }
 
 .filter {
@@ -435,6 +444,11 @@ a svg,
 .tag.grade {
   color: #24515f;
   background: #e0f5fb;
+}
+
+.tag.exam {
+  color: #604200;
+  background: #fff4bf;
 }
 
 .tag.notice {
@@ -764,6 +778,15 @@ menu .primary-button {
   .segmented {
     width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .segmented.category-tabs {
+    display: flex;
+    grid-template-columns: none;
+  }
+
+  .segmented.category-tabs .filter {
+    border-bottom: 0;
   }
 
   .filter {
