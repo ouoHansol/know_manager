@@ -561,11 +561,6 @@ a svg,
   background: #fff0ce;
 }
 
-.profile-panel {
-  position: sticky;
-  top: 14px;
-}
-
 .identity-card,
 .course-list-card,
 .credit-card,
@@ -728,11 +723,6 @@ textarea {
   font-weight: 800;
 }
 
-.notice-panel {
-  position: sticky;
-  top: 14px;
-}
-
 .notice-list {
   display: grid;
   gap: 8px;
@@ -770,6 +760,28 @@ textarea {
 
 .notice-empty {
   min-height: 80px;
+}
+
+.notice-pagination {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.notice-pagination button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.notice-pagination button.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
 }
 
 .notice-summary {
@@ -894,10 +906,6 @@ menu .primary-button {
 @media (max-width: 1040px) {
   .main-grid {
     grid-template-columns: 1fr;
-  }
-
-  .notice-panel {
-    position: static;
   }
 }
 

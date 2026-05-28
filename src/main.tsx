@@ -472,6 +472,15 @@ function EventList({
 }
 
 function NoticePanel({ notices, onSelect }: { notices: KnouEvent[]; onSelect: (notice: KnouEvent) => void }) {
+  const [page, setPage] = useState(0);
+  const latestNotices = notices.slice(0, 10);
+  const pageCount = Math.ceil(latestNotices.length / 5);
+  const visibleNotices = latestNotices.slice(page * 5, page * 5 + 5);
+
+  useEffect(() => {
+    if (page > 0 && page >= pageCount) setPage(Math.max(pageCount - 1, 0));
+  }, [page, pageCount]);
+
   return (
     <section className="panel notice-panel">
       <div className="panel-heading">
@@ -483,14 +492,25 @@ function NoticePanel({ notices, onSelect }: { notices: KnouEvent[]; onSelect: (n
       {!notices.length ? (
         <div className="empty notice-empty">표시할 공지가 없습니다.</div>
       ) : (
-        <div className="notice-list">
-          {notices.slice(0, 10).map((notice) => (
-            <button key={notice.id} className="notice-item" onClick={() => onSelect(notice)}>
-              <span>{formatShortDate(notice.date)}</span>
-              <strong>{notice.title}</strong>
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="notice-list">
+            {visibleNotices.map((notice) => (
+              <button key={notice.id} className="notice-item" onClick={() => onSelect(notice)}>
+                <span>{formatShortDate(notice.date)}</span>
+                <strong>{notice.title}</strong>
+              </button>
+            ))}
+          </div>
+          {pageCount > 1 ? (
+            <div className="notice-pagination" aria-label="공지 페이지">
+              {Array.from({ length: pageCount }, (_, index) => (
+                <button key={index} className={page === index ? "active" : ""} onClick={() => setPage(index)}>
+                  {index + 1}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </>
       )}
     </section>
   );
