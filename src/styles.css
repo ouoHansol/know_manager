@@ -477,6 +477,7 @@ a svg,
 }
 
 .identity-card,
+.course-list-card,
 .credit-card,
 .grade-card {
   width: 100%;
@@ -495,7 +496,15 @@ a svg,
   margin-bottom: 9px;
 }
 
+.course-list-card {
+  color: var(--text);
+  text-decoration: none;
+  margin-bottom: 9px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
 .identity-card svg,
+.course-list-card svg,
 .credit-card svg,
 .grade-card svg {
   width: 20px;
@@ -504,6 +513,7 @@ a svg,
 }
 
 .identity-card strong,
+.course-list-card strong,
 .credit-card strong,
 .grade-card strong {
   display: block;
@@ -513,6 +523,7 @@ a svg,
 }
 
 .identity-card span,
+.course-list-card span,
 .credit-card span,
 .grade-card span {
   display: block;
@@ -520,6 +531,11 @@ a svg,
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.course-list-card:hover {
+  border-color: #b9c7d1;
+  background: #f9fbfc;
 }
 
 .credit-card {

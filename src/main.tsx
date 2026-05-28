@@ -51,6 +51,7 @@ type Profile = {
   department?: string;
   credits?: string;
   grade?: string;
+  courseListUrl?: string;
 };
 
 type SyncedPayload = {
@@ -431,6 +432,14 @@ function ProfilePanel({
           <span>{profile.department || "학과 수집 전"}</span>
         </div>
       </div>
+      <a className="course-list-card" href={profile.courseListUrl || "https://m.knou.ac.kr/dashboard/course-list"} target="_blank" rel="noreferrer">
+        <BookOpen />
+        <div>
+          <span>수강목록</span>
+          <strong>현재 수강과목 보기</strong>
+        </div>
+        <ExternalLink />
+      </a>
       <div className="credit-card">
         <GraduationCap />
         <div>
@@ -772,17 +781,25 @@ function exportData(events: KnouEvent[]) {
 }
 
 function getDayDiff(date: string) {
+  if (!date) return Number.POSITIVE_INFINITY;
   const today = new Date();
   const base = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const target = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(target.getTime())) return Number.POSITIVE_INFINITY;
   return Math.round((target.getTime() - base.getTime()) / 86400000);
 }
 
 function sortByDate(a: KnouEvent, b: KnouEvent) {
+  if (!a.date && !b.date) return (a.title || "").localeCompare(b.title || "");
+  if (!a.date) return 1;
+  if (!b.date) return -1;
   return `${a.date} ${a.time || "23:59"}`.localeCompare(`${b.date} ${b.time || "23:59"}`);
 }
 
 function sortByNewest(a: KnouEvent, b: KnouEvent) {
+  if (!a.date && !b.date) return 0;
+  if (!a.date) return 1;
+  if (!b.date) return -1;
   return `${b.date} ${b.time || "23:59"}`.localeCompare(`${a.date} ${a.time || "23:59"}`);
 }
 
@@ -797,6 +814,7 @@ function sortByUrgency(a: KnouEvent, b: KnouEvent) {
 function statusClass(event: KnouEvent) {
   if (isMissedEvent(event)) return "overdue";
   if (event.done || event.status === "complete") return "done";
+  if (!event.date) return "";
   const diff = event.diff ?? getDayDiff(event.date);
   if (diff < 0) return "overdue";
   if (diff <= 7) return "soon";
@@ -809,6 +827,7 @@ function statusText(event: KnouEvent) {
   if (event.status === "graded") return "평가완료";
   if (event.status === "available") return "신청가능";
   if (event.status === "complete" || event.done) return "완료";
+  if (!event.date) return "일자 미정";
   const diff = event.diff ?? getDayDiff(event.date);
   if (diff < 0) return `${Math.abs(diff)}일 지연`;
   if (diff === 0) return "오늘";
@@ -818,10 +837,12 @@ function statusText(event: KnouEvent) {
 }
 
 function isMissedEvent(event: KnouEvent) {
+  if (!event.date) return false;
   return event.status === "missed" || (!event.done && getDayDiff(event.date) < 0);
 }
 
 function formatDate(event: KnouEvent) {
+  if (!event.date) return "일자 미정";
   const date = new Date(`${event.date}T00:00:00`);
   const label = new Intl.DateTimeFormat("ko-KR", {
     month: "numeric",

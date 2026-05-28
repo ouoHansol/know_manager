@@ -255,13 +255,14 @@ async function collectMobileKnou(page, collected) {
     await page.waitForTimeout(700);
     const data = await extractMobilePageData(page);
     profile = { ...profile, ...extractMobileProfile(data.text) };
+    if (url.includes("/dashboard/course-list")) {
+      profile.courseListUrl = url;
+    }
 
     if (url.includes("/assignment/submit")) {
       collected.push(...parseMobileAssignmentCards(data.assignmentCards, "assignment", "중간 과제물", source, url));
-      collected.push(...parseMobileAssignmentCards(data.assignmentCards, "exam", "중간평가 과제물", source, url));
     } else if (url.includes("/assignment/class-attendance")) {
       collected.push(...parseMobileAssignmentCards(data.assignmentCards, "substitute", "출석수업 과제물", source, url));
-      collected.push(...parseMobileAssignmentCards(data.assignmentCards, "exam", "중간평가 출석과제물", source, url));
     } else if (url.includes("/attendance/schedule-place-inquiry")) {
       collected.push(...parseMobileAttendance(data.text, source, url));
     } else if (url.includes("/attendance/change-type")) {
@@ -407,19 +408,26 @@ function parseUnavailableNotice(text, type, title, source, url) {
 function parseMobileGrades(text, source, url) {
   const lines = normalizeLines(text);
   const yearTerm = lines.find((line) => /20\d{2}학년도\s+\d학기/.test(line)) || "";
-  const courseNames = unique(lines.filter((line) => isCourseLike(line)));
-  return courseNames.map((course) => ({
-    id: stableId(`mobile-grade|${course}|${yearTerm}`),
-    type: "grade",
-    title: `${course} 성적`,
-    date: todayIso(),
-    time: "",
-    priority: "normal",
-    note: `${source}: ${yearTerm || "현재학기"} 성적 조회 대상`,
-    link: url,
-    status: "open",
-    done: false,
-  }));
+  return unique(lines.filter((line) => isCourseLike(line)))
+    .map((course) => {
+      const courseIndex = lines.findIndex((line) => line === course);
+      const block = lines.slice(courseIndex, courseIndex + 8).join(" ");
+      const score = block.match(/(?:점수|취득점수|평점|등급)\s*[:：]?\s*([A-F][+0-]?|\d{1,3}(?:\.\d+)?점?)/i)?.[1] || "";
+      if (!score) return null;
+      return {
+        id: stableId(`mobile-grade|${course}|${yearTerm}|${score}`),
+        type: "grade",
+        title: `${course} 성적`,
+        date: "",
+        time: "",
+        priority: "normal",
+        note: `${source}: ${yearTerm || "현재학기"} 성적 ${score}`,
+        link: url,
+        status: "graded",
+        done: true,
+      };
+    })
+    .filter(Boolean);
 }
 
 function parseMobileCourseList(text, source, url) {
@@ -428,18 +436,6 @@ function parseMobileCourseList(text, source, url) {
   const courseNames = unique(lines.filter((line) => isCourseLike(line)));
   const dueLine = lines.find((line) => /형성평가.*20\d{2}[./-]\d{1,2}[./-]\d{1,2}/.test(line));
   const dueDate = dueLine ? findDate(dueLine)?.date : null;
-  const courseEvents = courseNames.map((course) => ({
-    id: stableId(`mobile-course|${course}|${yearTerm}`),
-    type: "course",
-    title: `${course} 수강정보`,
-    date: dueDate || todayIso(),
-    time: dueDate ? "23:59" : "",
-    priority: "normal",
-    note: `${source}: ${yearTerm || "현재학기"} 수강 과목`,
-    link: url,
-    status: "open",
-    done: false,
-  }));
   const examEvents = courseNames.flatMap((course, index) => {
     const courseIndex = lines.findIndex((line) => line === course);
     const nextCourseIndex = courseNames[index + 1] ? lines.findIndex((line, lineIndex) => lineIndex > courseIndex && line === courseNames[index + 1]) : -1;
@@ -451,7 +447,7 @@ function parseMobileCourseList(text, source, url) {
         id: stableId(`mobile-final-exam|${course}|${yearTerm}`),
         type: "exam",
         title: `${course} 기말 시험`,
-        date: todayIso(),
+        date: "",
         time: "",
         priority: "high",
         note: `${source}: ${yearTerm || "현재학기"} 기말평가 방식 - 기말 시험. 상세 일시는 학교 화면에서 아직 비어 있거나 확정 전입니다.`,
@@ -460,28 +456,15 @@ function parseMobileCourseList(text, source, url) {
         done: false,
       });
     }
-    if (/출석과제물/.test(block)) {
+    if (/중간\s*시험/.test(block)) {
       events.push({
-        id: stableId(`mobile-mid-exam|${course}|attendance-assignment|${yearTerm}`),
+        id: stableId(`mobile-mid-exam|${course}|${yearTerm}`),
         type: "exam",
-        title: `${course} 중간평가 - 출석과제물`,
-        date: todayIso(),
+        title: `${course} 중간 시험`,
+        date: "",
         time: "",
         priority: "normal",
-        note: `${source}: ${yearTerm || "현재학기"} 중간평가 방식 - 출석과제물`,
-        link: url,
-        status: "open",
-        done: false,
-      });
-    } else if (/과제물/.test(block)) {
-      events.push({
-        id: stableId(`mobile-mid-exam|${course}|assignment|${yearTerm}`),
-        type: "exam",
-        title: `${course} 중간평가 - 과제물`,
-        date: todayIso(),
-        time: "",
-        priority: "normal",
-        note: `${source}: ${yearTerm || "현재학기"} 중간평가 방식 - 과제물`,
+        note: `${source}: ${yearTerm || "현재학기"} 중간평가 방식 - 중간 시험. 상세 일시는 학교 화면에서 아직 비어 있거나 확정 전입니다.`,
         link: url,
         status: "open",
         done: false,
@@ -489,7 +472,7 @@ function parseMobileCourseList(text, source, url) {
     }
     return events;
   });
-  return [...courseEvents, ...examEvents];
+  return examEvents;
 }
 
 async function extractProfile(page) {
