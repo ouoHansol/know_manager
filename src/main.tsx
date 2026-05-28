@@ -524,8 +524,7 @@ function ExamFocus({ events }: { events: KnouEvent[] }) {
           {events.map((event) => (
             <a key={event.id} className="exam-focus-item" href={event.link || "#"} target="_blank" rel="noreferrer">
               <strong>{event.title}</strong>
-              <span>{event.date ? `${event.date} ${event.time || ""}` : "일자 선택 필요!"}</span>
-              {event.note ? <p>{event.note}</p> : null}
+              <ExamDetails event={event} />
             </a>
           ))}
         </div>
@@ -610,7 +609,8 @@ function EventCard({
             <Pencil />
           </button>
         </div>
-        {event.note ? <p className="event-note">{event.note}</p> : null}
+        {event.note && event.type !== "exam" ? <p className="event-note">{event.note}</p> : null}
+        {event.type === "exam" ? <ExamDetails event={event} compact /> : null}
       </div>
       <div className="date-chip">{formatDate(event)}</div>
     </article>
@@ -914,6 +914,36 @@ function GradeDialog({
   );
 }
 
+function ExamDetails({ event, compact = false }: { event: KnouEvent; compact?: boolean }) {
+  const details = parseExamDetails(event);
+  if (!details && !event.note) return null;
+  return (
+    <div className={`exam-details ${compact ? "compact" : ""}`}>
+      <div className="exam-detail-grid">
+        <span>
+          <strong>일자</strong>
+          {details?.date || event.date || "일자 선택 필요!"}
+        </span>
+        <span>
+          <strong>시간</strong>
+          {details?.time || event.time || "확인 필요"}
+        </span>
+        <span>
+          <strong>장소</strong>
+          {details?.place || "확인 필요"}
+        </span>
+      </div>
+      {details?.subjects.length ? (
+        <div className="subject-badges">
+          {details.subjects.map((subject) => (
+            <span key={subject}>{subject}</span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1040,6 +1070,24 @@ function getNoticeSummaryItems(notice: KnouEvent): NoticeSummaryItem[] {
     .replace(/\s*첨부파일\s*\d+\s*개\s*있음\s*$/, "")
     .trim();
   return [{ label: "요약", text: raw || notice.title }];
+}
+
+function parseExamDetails(event: KnouEvent) {
+  const note = event.note || "";
+  const date = note.match(/시험일자\s*(20\d{2}-\d{2}-\d{2})/)?.[1] || event.date;
+  const parts = note
+    .replace(/^\*/, "")
+    .split("/")
+    .map((part) => part.trim());
+  const place = parts.find((part) => /지역대학|학습관|시험장|온라인|ZOOM/.test(part) && !part.includes("응시과목")) || "";
+  const time = parts.find((part) => /\b[0-2]?\d:[0-5]\d\s*~\s*[0-2]?\d:[0-5]\d\b/.test(part)) || event.time || "";
+  const subjectText = note.match(/응시과목:\s*(.+)$/)?.[1] || "";
+  const subjects = subjectText
+    .split(",")
+    .map((subject) => subject.trim())
+    .filter(Boolean);
+  if (!date && !place && !time && !subjects.length) return null;
+  return { date, place, time, subjects };
 }
 
 function stringifyFormValue(value: FormDataEntryValue | null): string {
