@@ -283,7 +283,7 @@ function App() {
 
         <section className="main-grid">
           <aside className="left-sidebar">
-            <ProfilePanel profile={profile} gradeEvents={gradeEvents} onOpenGrades={() => setGradeOpen(true)} />
+            <ProfilePanel profile={profile} gradeEvents={gradeEvents} onOpenGrades={() => setGradeOpen(true)} onSynced={applySyncedPayload} />
             <NoticePanel notices={notices} onSelect={setSelectedNotice} />
           </aside>
           <div className="work-area">
@@ -520,11 +520,15 @@ function ProfilePanel({
   profile,
   gradeEvents,
   onOpenGrades,
+  onSynced,
 }: {
   profile: Profile;
   gradeEvents: KnouEvent[];
   onOpenGrades: () => void;
+  onSynced: (payload: SyncedPayload) => void;
 }) {
+  const hasProfile = Boolean(profile.name || profile.department || profile.credits);
+
   return (
     <section className="panel profile-panel">
       <div className="panel-heading">
@@ -533,36 +537,45 @@ function ProfilePanel({
           <h2>내 상태</h2>
         </div>
       </div>
-      <div className="identity-card">
-        <UserRound />
-        <div>
-          <strong>{profile.name || "이름 수집 전"}</strong>
-          <span>{profile.department || "학과 수집 전"}</span>
+      {!hasProfile ? (
+        <div className="profile-login">
+          <p className="hint">로그인하면 이름, 학과, 수강목록, 학점 정보를 이 영역에 표시합니다.</p>
+          <SyncForm onSynced={onSynced} />
         </div>
-      </div>
-      <a className="course-list-card" href={profile.courseListUrl || "https://m.knou.ac.kr/dashboard/course-list"} target="_blank" rel="noreferrer">
-        <BookOpen />
-        <div>
-          <span>수강목록</span>
-          <strong>현재 수강과목 보기</strong>
-        </div>
-        <ExternalLink />
-      </a>
-      <a className="credit-card" href={profile.creditUrl || "https://m.knou.ac.kr/agm"} target="_blank" rel="noreferrer">
-        <GraduationCap />
-        <div>
-          <span>나의 총 학점</span>
-          <strong>{formatCredits(profile.credits)}</strong>
-        </div>
-        <ExternalLink />
-      </a>
-      <button className="grade-card" onClick={onOpenGrades}>
-        <BookOpen />
-        <div>
-          <span>현재 수강과목 성적</span>
-          <strong>{countScoredGrades(gradeEvents)}개 채점됨</strong>
-        </div>
-      </button>
+      ) : (
+        <>
+          <div className="identity-card">
+            <UserRound />
+            <div>
+              <strong>{profile.name || "이름 수집 전"}</strong>
+              <span>{profile.department || "학과 수집 전"}</span>
+            </div>
+          </div>
+          <a className="course-list-card" href={profile.courseListUrl || "https://m.knou.ac.kr/dashboard/course-list"} target="_blank" rel="noreferrer">
+            <BookOpen />
+            <div>
+              <span>수강목록</span>
+              <strong>현재 수강과목 보기</strong>
+            </div>
+            <ExternalLink />
+          </a>
+          <a className="credit-card" href={profile.creditUrl || "https://m.knou.ac.kr/agm"} target="_blank" rel="noreferrer">
+            <GraduationCap />
+            <div>
+              <span>나의 총 학점</span>
+              <strong>{formatCredits(profile.credits)}</strong>
+            </div>
+            <ExternalLink />
+          </a>
+          <button className="grade-card" onClick={onOpenGrades}>
+            <BookOpen />
+            <div>
+              <span>현재 수강과목 성적</span>
+              <strong>{countScoredGrades(gradeEvents)}개 채점됨</strong>
+            </div>
+          </button>
+        </>
+      )}
     </section>
   );
 }
@@ -860,6 +873,37 @@ function EventForm({
 }
 
 function SyncDialog({ open, onClose, onSynced }: { open: boolean; onClose: () => void; onSynced: (payload: SyncedPayload) => void }) {
+  function handleSynced(payload: SyncedPayload) {
+    onSynced(payload);
+  }
+
+  return (
+    <Modal open={open} onClose={onClose}>
+      <div className="dialog-card">
+        <div className="panel-heading">
+          <h2>내 계정으로 동기화</h2>
+          <button className="icon-button" onClick={onClose} aria-label="닫기">
+            <X />
+          </button>
+        </div>
+        <p className="hint">
+          아이디와 비밀번호는 이 브라우저에만 저장됩니다. 동기화 요청 때만 Vercel API로 전달되고 저장소나 서버 환경변수에는 저장하지 않습니다.
+        </p>
+        <SyncForm onSynced={handleSynced} />
+        <div className="links-panel">
+          <a href="https://www.knou.ac.kr" target="_blank" rel="noreferrer">
+            <ExternalLink /> 방통대 대표 홈페이지
+          </a>
+          <a href="https://ucampus.knou.ac.kr" target="_blank" rel="noreferrer">
+            <ExternalLink /> U-KNOU 캠퍼스
+          </a>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) {
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState("");
   const [remember, setRemember] = useState(true);
@@ -902,51 +946,32 @@ function SyncDialog({ open, onClose, onSynced }: { open: boolean; onClose: () =>
   }
 
   return (
-    <Modal open={open} onClose={onClose}>
-      <div className="dialog-card">
-        <div className="panel-heading">
-          <h2>내 계정으로 동기화</h2>
-          <button className="icon-button" onClick={onClose} aria-label="닫기">
-            <X />
-          </button>
-        </div>
-        <p className="hint">
-          아이디와 비밀번호는 이 브라우저에만 저장됩니다. 동기화 요청 때만 Vercel API로 전달되고 저장소나 서버 환경변수에는 저장하지 않습니다.
-        </p>
-        <form className="event-form" onSubmit={syncNow}>
-          <label>
-            방통대 아이디
-            <input name="id" autoComplete="username" value={credentials.id} onChange={(event) => setCredentials({ ...credentials, id: event.target.value })} />
-          </label>
-          <label>
-            비밀번호
-            <input
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              value={credentials.password}
-              onChange={(event) => setCredentials({ ...credentials, password: event.target.value })}
-            />
-          </label>
-          <label className="check-row">
-            <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
-            이 브라우저에 계정정보 저장
-          </label>
-          <button className="primary-button" type="submit" disabled={running}>
-            <RefreshCw /> {running ? "동기화 중" : "지금 동기화"}
-          </button>
-        </form>
-        {message ? <p className="sync-message">{message}</p> : null}
-        <div className="links-panel">
-          <a href="https://www.knou.ac.kr" target="_blank" rel="noreferrer">
-            <ExternalLink /> 방통대 대표 홈페이지
-          </a>
-          <a href="https://ucampus.knou.ac.kr" target="_blank" rel="noreferrer">
-            <ExternalLink /> U-KNOU 캠퍼스
-          </a>
-        </div>
-      </div>
-    </Modal>
+    <>
+      <form className="event-form" onSubmit={syncNow}>
+        <label>
+          방통대 아이디
+          <input name="id" autoComplete="username" value={credentials.id} onChange={(event) => setCredentials({ ...credentials, id: event.target.value })} />
+        </label>
+        <label>
+          비밀번호
+          <input
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            value={credentials.password}
+            onChange={(event) => setCredentials({ ...credentials, password: event.target.value })}
+          />
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
+          이 브라우저에 계정정보 저장
+        </label>
+        <button className="primary-button" type="submit" disabled={running}>
+          <RefreshCw /> {running ? "동기화 중" : "지금 동기화"}
+        </button>
+      </form>
+      {message ? <p className="sync-message">{message}</p> : null}
+    </>
   );
 }
 
