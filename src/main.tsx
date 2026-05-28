@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  StickyNote,
   Trash,
   Trash2,
   UserRound,
@@ -19,6 +20,7 @@ import {
 import "./styles.css";
 
 const STORAGE_KEY = "knou-essential-manager-v2";
+const MEMO_STORAGE_KEY = "knou-essential-memos-v1";
 
 type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "exam" | "notice";
 type Priority = "high" | "normal" | "low";
@@ -55,6 +57,13 @@ type Profile = {
   creditUrl?: string;
 };
 
+type MemoItem = {
+  id: string;
+  title: string;
+  body: string;
+  updatedAt: string;
+};
+
 type SyncedPayload = {
   events: KnouEvent[];
   profile?: Profile;
@@ -75,10 +84,13 @@ const typeLabels: Record<EventType, string> = {
 
 function App() {
   const [events, setEvents] = useStoredEvents();
+  const [memos, setMemos] = useStoredMemos();
   const [categoryView, setCategoryView] = useState<CategoryView>("all");
   const [profile, setProfile] = useState<Profile>({});
   const [completionView, setCompletionView] = useState<CompletionView>("open");
   const [addOpen, setAddOpen] = useState(false);
+  const [memoOpen, setMemoOpen] = useState(false);
+  const [editingMemo, setEditingMemo] = useState<MemoItem | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [editing, setEditing] = useState<KnouEvent | null>(null);
   const [selectedNotice, setSelectedNotice] = useState<KnouEvent | null>(null);
@@ -98,14 +110,8 @@ function App() {
   const scheduleEvents = useMemo(() => events.filter((event) => event.type !== "notice" && event.type !== "grade"), [events]);
   const notices = useMemo(() => events.filter((event) => event.type === "notice").sort(sortByNewest), [events]);
   const openEvents = scheduleEvents.filter((event) => !event.done);
-  const overdue = openEvents.filter((event) => getDayDiff(event.date) < 0);
-  const missedEvents = scheduleEvents.filter(isMissedEvent).sort(sortByDate);
-  const doneEvents = scheduleEvents.filter((event) => event.done && event.status !== "missed");
   const gradeEvents = events.filter((event) => event.type === "grade").sort(sortByDate);
-  const soon = openEvents.filter((event) => {
-    const diff = getDayDiff(event.date);
-    return diff >= 0 && diff <= 7;
-  });
+  const topExamEvents = useMemo(() => scheduleEvents.filter((event) => event.type === "exam" && !event.done).sort(sortByUrgency).slice(0, 3), [scheduleEvents]);
 
   const visibleEvents = useMemo(() => {
     return scheduleEvents
@@ -113,15 +119,6 @@ function App() {
       .filter((event) => (completionView === "open" ? !event.done : event.done))
       .sort(sortByDate);
   }, [categoryView, completionView, scheduleEvents]);
-
-  const alerts = useMemo(() => {
-    return scheduleEvents
-      .filter((event) => !event.done)
-      .map((event) => ({ ...event, diff: getDayDiff(event.date) }))
-      .filter((event) => event.diff <= 7 || event.priority === "high")
-      .sort(sortByUrgency)
-      .slice(0, 8);
-  }, [scheduleEvents]);
 
   function addEvent(formData: FormData) {
     const type = formData.get("type");
@@ -147,6 +144,46 @@ function App() {
       },
     ]);
     setAddOpen(false);
+  }
+
+  function addMemo(formData: FormData) {
+    const title = stringifyFormValue(formData.get("title")).trim();
+    const body = stringifyFormValue(formData.get("body")).trim();
+    if (!title && !body) return;
+    setMemos((current) => [
+      {
+        id: crypto.randomUUID(),
+        title: title || "메모",
+        body,
+        updatedAt: new Date().toISOString(),
+      },
+      ...current,
+    ]);
+    setMemoOpen(false);
+  }
+
+  function saveMemo(formData: FormData) {
+    if (!editingMemo) return;
+    const title = stringifyFormValue(formData.get("title")).trim();
+    const body = stringifyFormValue(formData.get("body")).trim();
+    setMemos((current) =>
+      current.map((memo) =>
+        memo.id === editingMemo.id
+          ? {
+              ...memo,
+              title: title || "메모",
+              body,
+              updatedAt: new Date().toISOString(),
+            }
+          : memo
+      )
+    );
+    setEditingMemo(null);
+  }
+
+  function deleteMemo(id: string) {
+    setMemos((current) => current.filter((memo) => memo.id !== id));
+    setEditingMemo(null);
   }
 
   function toggleDone(id: string) {
@@ -224,11 +261,9 @@ function App() {
       </header>
 
       <main className="layout">
-        <section className="summary-band" aria-label="요약">
-          <Metric className="danger" label="지연" value={overdue.length} />
-          <Metric className="danger" label="놓친 정보" value={missedEvents.length} />
-          <Metric className="warning" label="7일 이내" value={soon.length} />
-          <Metric label="미완료" value={openEvents.length} />
+        <section className="priority-board" aria-label="주요 정보">
+          <ExamFocus events={topExamEvents} />
+          <MemoPanel memos={memos} onAdd={() => setMemoOpen(true)} onEdit={setEditingMemo} onDelete={deleteMemo} />
         </section>
 
         <section className="main-grid">
@@ -283,6 +318,8 @@ function App() {
       </main>
 
       <AddDialog open={addOpen} onClose={() => setAddOpen(false)} onSubmit={addEvent} />
+      <MemoDialog open={memoOpen} onClose={() => setMemoOpen(false)} onSubmit={addMemo} />
+      <MemoDialog memo={editingMemo} open={Boolean(editingMemo)} onClose={() => setEditingMemo(null)} onSubmit={saveMemo} onDelete={deleteMemo} />
       <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
       <EditDialog event={editing} onClose={() => setEditing(null)} onSubmit={saveEdit} onDelete={deleteEvent} />
       <NoticeDialog notice={selectedNotice} onClose={() => setSelectedNotice(null)} />
@@ -325,13 +362,27 @@ function useStoredEvents(): [KnouEvent[], SetEvents] {
   return [events, setEvents];
 }
 
-function Metric({ className = "", label, value }: { className?: string; label: string; value: string | number }) {
-  return (
-    <article className={`metric ${className}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
-  );
+function useStoredMemos(): [MemoItem[], React.Dispatch<React.SetStateAction<MemoItem[]>>] {
+  const [memos, setMemosState] = useState(() => {
+    const saved = localStorage.getItem(MEMO_STORAGE_KEY);
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed.memos) ? parsed.memos : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const setMemos = useCallback<React.Dispatch<React.SetStateAction<MemoItem[]>>>((updater) => {
+    setMemosState((current: MemoItem[]) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      localStorage.setItem(MEMO_STORAGE_KEY, JSON.stringify({ memos: next }));
+      return next;
+    });
+  }, []);
+
+  return [memos, setMemos];
 }
 
 function Panel({
@@ -457,6 +508,79 @@ function ProfilePanel({
   );
 }
 
+function ExamFocus({ events }: { events: KnouEvent[] }) {
+  return (
+    <section className="panel focus-panel exam-focus">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">exam</p>
+          <h2>시험 일정</h2>
+        </div>
+      </div>
+      {!events.length ? (
+        <p className="empty compact-empty">시험 일정이 없습니다. 동기화를 실행하세요.</p>
+      ) : (
+        <div className="focus-list">
+          {events.map((event) => (
+            <a key={event.id} className="exam-focus-item" href={event.link || "#"} target="_blank" rel="noreferrer">
+              <strong>{event.title}</strong>
+              <span>{event.date ? `${event.date} ${event.time || ""}` : "일자 선택 필요!"}</span>
+              {event.note ? <p>{event.note}</p> : null}
+            </a>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MemoPanel({
+  memos,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  memos: MemoItem[];
+  onAdd: () => void;
+  onEdit: (memo: MemoItem) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <section className="panel focus-panel memo-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">memo</p>
+          <h2>내 메모</h2>
+        </div>
+        <button className="secondary-button" onClick={onAdd}>
+          <Plus /> 메모
+        </button>
+      </div>
+      {!memos.length ? (
+        <p className="empty compact-empty">아직 메모가 없습니다.</p>
+      ) : (
+        <div className="memo-list">
+          {memos.slice(0, 4).map((memo) => (
+            <article key={memo.id} className="memo-item">
+              <StickyNote />
+              <div>
+                <strong>{memo.title}</strong>
+                {memo.body ? <p>{memo.body}</p> : null}
+              </div>
+              <button className="row-action" onClick={() => onEdit(memo)} title="수정" aria-label="메모 수정">
+                <Pencil />
+              </button>
+              <button className="row-action" onClick={() => onDelete(memo.id)} title="삭제" aria-label="메모 삭제">
+                <Trash />
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function EventCard({
   event,
   onToggle,
@@ -550,6 +674,57 @@ function EditDialog({
           </menu>
         </form>
       ) : null}
+    </Modal>
+  );
+}
+
+function MemoDialog({
+  open,
+  memo,
+  onClose,
+  onSubmit,
+  onDelete,
+}: {
+  open: boolean;
+  memo?: MemoItem | null;
+  onClose: () => void;
+  onSubmit: (formData: FormData) => void;
+  onDelete?: (id: string) => void;
+}) {
+  return (
+    <Modal open={open} onClose={onClose}>
+      <form
+        className="dialog-card"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit(new FormData(event.currentTarget));
+        }}
+      >
+        <div className="panel-heading">
+          <h2>{memo ? "메모 수정" : "메모 추가"}</h2>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="닫기">
+            <X />
+          </button>
+        </div>
+        <label>
+          제목
+          <input name="title" type="text" defaultValue={memo?.title || ""} placeholder="예: 시험 준비물" />
+        </label>
+        <label>
+          내용
+          <textarea name="body" rows={5} defaultValue={memo?.body || ""} placeholder="잊으면 안 되는 내용" />
+        </label>
+        <menu>
+          {memo && onDelete ? (
+            <button className="danger-button" type="button" onClick={() => onDelete(memo.id)}>
+              <Trash /> 삭제
+            </button>
+          ) : null}
+          <button className="primary-button" type="submit">
+            <Save /> 저장
+          </button>
+        </menu>
+      </form>
     </Modal>
   );
 }
