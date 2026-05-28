@@ -258,6 +258,9 @@ async function collectMobileKnou(page, collected) {
     if (url.includes("/dashboard/course-list")) {
       profile.courseListUrl = url;
     }
+    if (url.includes("/agm")) {
+      profile.creditUrl = url;
+    }
 
     if (url.includes("/assignment/submit")) {
       collected.push(...parseMobileAssignmentCards(data.assignmentCards, "assignment", "중간 과제물", source, url));

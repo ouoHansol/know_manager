@@ -23,7 +23,7 @@ const STORAGE_KEY = "knou-essential-manager-v2";
 type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "exam" | "notice";
 type Priority = "high" | "normal" | "low";
 type EventStatus = "open" | "missed" | "submitted" | "graded" | "available" | "complete";
-type CategoryView = "all" | "course" | "assignment" | "attendance" | "exam" | "grade";
+type CategoryView = "all" | "course" | "assignment" | "attendance" | "exam";
 type CompletionView = "open" | "done";
 
 type NoticeSummaryItem = {
@@ -52,6 +52,7 @@ type Profile = {
   credits?: string;
   grade?: string;
   courseListUrl?: string;
+  creditUrl?: string;
 };
 
 type SyncedPayload = {
@@ -65,7 +66,7 @@ const typeLabels: Record<EventType, string> = {
   assignment: "과제물",
   attendance: "출석수업",
   registration: "수강신청",
-  course: "수강정보",
+  course: "형성평가",
   substitute: "출석대체",
   grade: "학점",
   exam: "시험",
@@ -94,13 +95,13 @@ function App() {
     });
   }, [setEvents]);
 
-  const scheduleEvents = useMemo(() => events.filter((event) => event.type !== "notice"), [events]);
+  const scheduleEvents = useMemo(() => events.filter((event) => event.type !== "notice" && event.type !== "grade"), [events]);
   const notices = useMemo(() => events.filter((event) => event.type === "notice").sort(sortByNewest), [events]);
   const openEvents = scheduleEvents.filter((event) => !event.done);
   const overdue = openEvents.filter((event) => getDayDiff(event.date) < 0);
   const missedEvents = scheduleEvents.filter(isMissedEvent).sort(sortByDate);
   const doneEvents = scheduleEvents.filter((event) => event.done && event.status !== "missed");
-  const gradeEvents = scheduleEvents.filter((event) => event.type === "grade").sort(sortByDate);
+  const gradeEvents = events.filter((event) => event.type === "grade").sort(sortByDate);
   const soon = openEvents.filter((event) => {
     const diff = getDayDiff(event.date);
     return diff >= 0 && diff <= 7;
@@ -228,7 +229,6 @@ function App() {
           <Metric className="danger" label="놓친 정보" value={missedEvents.length} />
           <Metric className="warning" label="7일 이내" value={soon.length} />
           <Metric label="미완료" value={openEvents.length} />
-          <Metric className="calm" label="학점 항목" value={gradeEvents.length} />
         </section>
 
         <section className="main-grid">
@@ -249,7 +249,6 @@ function App() {
                       ["assignment", "과제물"],
                       ["attendance", "출석"],
                       ["exam", "시험"],
-                      ["grade", "학점"],
                     ] satisfies Array<[CategoryView, string]>).map(([value, label]) => (
                       <button key={value} className={`filter ${categoryView === value ? "active" : ""}`} onClick={() => setCategoryView(value)}>
                         {label}
@@ -299,7 +298,6 @@ function matchesCategoryView(categoryView: CategoryView) {
     if (categoryView === "assignment") return event.type === "assignment";
     if (categoryView === "attendance") return event.type === "attendance" || event.type === "substitute";
     if (categoryView === "exam") return event.type === "exam";
-    if (categoryView === "grade") return event.type === "grade";
     return true;
   };
 }
@@ -440,13 +438,14 @@ function ProfilePanel({
         </div>
         <ExternalLink />
       </a>
-      <div className="credit-card">
+      <a className="credit-card" href={profile.creditUrl || "https://m.knou.ac.kr/agm"} target="_blank" rel="noreferrer">
         <GraduationCap />
         <div>
           <span>나의 총 학점</span>
           <strong>{formatCredits(profile.credits)}</strong>
         </div>
-      </div>
+        <ExternalLink />
+      </a>
       <button className="grade-card" onClick={onOpenGrades}>
         <BookOpen />
         <div>

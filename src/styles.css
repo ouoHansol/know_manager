@@ -539,9 +539,13 @@ a svg,
 }
 
 .credit-card {
+  color: var(--text);
+  text-decoration: none;
   margin-bottom: 9px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
+.credit-card:hover,
 .grade-card:hover {
   border-color: #b9c7d1;
   background: #f9fbfc;
