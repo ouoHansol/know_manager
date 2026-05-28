@@ -2,15 +2,18 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BellRing,
+  BookOpen,
   Download,
   ExternalLink,
   FileText,
+  GraduationCap,
   Pencil,
   Plus,
   RefreshCw,
   Save,
   Trash,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import "./styles.css";
@@ -22,32 +25,29 @@ const typeLabels = {
   attendance: "출석수업",
   registration: "수강신청",
   course: "수강정보",
+  substitute: "출석대체",
+  grade: "학점",
   notice: "공지",
 };
 
-const filters = [
-  ["all", "전체"],
-  ["registration", "수강신청"],
-  ["assignment", "과제"],
-  ["attendance", "출석"],
-  ["course", "수강"],
-];
-
 function App() {
   const [events, setEvents] = useStoredEvents();
-  const [activeFilter, setActiveFilter] = useState("all");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [categoryView, setCategoryView] = useState("course");
+  const [profile, setProfile] = useState({});
+  const [completionView, setCompletionView] = useState("open");
   const [addOpen, setAddOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [selectedNotice, setSelectedNotice] = useState(null);
+  const [gradeOpen, setGradeOpen] = useState(false);
 
   useEffect(() => {
-    loadSyncedEvents().then((synced) => {
-      if (!synced) return;
+    loadSyncedPayload().then((payload) => {
+      if (!payload) return;
+      setProfile(payload.profile || {});
       setEvents((current) => {
         const manualEvents = current.filter((event) => !String(event.id).startsWith("knou-"));
-        return [...manualEvents, ...synced];
+        return [...manualEvents, ...(payload.events || [])];
       });
     });
   }, [setEvents]);
@@ -56,14 +56,21 @@ function App() {
   const notices = useMemo(() => events.filter((event) => event.type === "notice").sort(sortByNewest), [events]);
   const openEvents = scheduleEvents.filter((event) => !event.done);
   const overdue = openEvents.filter((event) => getDayDiff(event.date) < 0);
+  const missedEvents = scheduleEvents.filter(isMissedEvent).sort(sortByDate);
+  const todoEvents = scheduleEvents.filter((event) => !event.done && !isMissedEvent(event));
+  const doneEvents = scheduleEvents.filter((event) => event.done && event.status !== "missed");
+  const gradeEvents = scheduleEvents.filter((event) => event.type === "grade").sort(sortByDate);
   const soon = openEvents.filter((event) => {
     const diff = getDayDiff(event.date);
     return diff >= 0 && diff <= 7;
   });
 
   const visibleEvents = useMemo(() => {
-    return scheduleEvents.filter(matchesCurrentView(activeFilter, searchTerm)).sort(sortByDate);
-  }, [activeFilter, scheduleEvents, searchTerm]);
+    return scheduleEvents
+      .filter(matchesCategoryView(categoryView))
+      .filter((event) => (completionView === "open" ? !event.done : event.done))
+      .sort(sortByDate);
+  }, [categoryView, completionView, scheduleEvents]);
 
   const alerts = useMemo(() => {
     return scheduleEvents
@@ -165,13 +172,15 @@ function App() {
       <main className="layout">
         <section className="summary-band" aria-label="요약">
           <Metric className="danger" label="지연" value={overdue.length} />
+          <Metric className="danger" label="놓친 정보" value={missedEvents.length} />
           <Metric className="warning" label="7일 이내" value={soon.length} />
           <Metric label="미완료" value={openEvents.length} />
-          <Metric className="calm" label="오늘" value={formatToday()} />
+          <Metric className="calm" label="학점 항목" value={gradeEvents.length} />
         </section>
 
         <section className="main-grid">
           <aside className="left-sidebar">
+            <ProfilePanel profile={profile} gradeEvents={gradeEvents} onOpenGrades={() => setGradeOpen(true)} />
             <NoticePanel notices={notices} onSelect={setSelectedNotice} />
           </aside>
           <div className="work-area">
@@ -192,16 +201,27 @@ function App() {
               title="필수 일정"
               action={
                 <div className="toolbar">
-                  <div className="segmented" role="tablist" aria-label="일정 필터">
-                    {filters.map(([value, label]) => (
-                      <button key={value} className={`filter ${activeFilter === value ? "active" : ""}`} onClick={() => setActiveFilter(value)}>
+                  <div className="segmented category-tabs" role="tablist" aria-label="일정 유형">
+                    {[
+                      ["course", "수강"],
+                      ["assignment", "과제물"],
+                      ["attendance", "출석"],
+                    ].map(([value, label]) => (
+                      <button key={value} className={`filter ${categoryView === value ? "active" : ""}`} onClick={() => setCategoryView(value)}>
                         {label}
                       </button>
                     ))}
                   </div>
-                  <label className="search-box">
-                    <input type="search" placeholder="과목, 메모 검색" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} />
-                  </label>
+                  <div className="segmented compact" role="tablist" aria-label="일정 보기">
+                    {[
+                      ["open", "미완료"],
+                      ["done", "완료"],
+                    ].map(([value, label]) => (
+                      <button key={value} className={`filter ${completionView === value ? "active" : ""}`} onClick={() => setCompletionView(value)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               }
             >
@@ -220,8 +240,18 @@ function App() {
       <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
       <EditDialog event={editing} onClose={() => setEditing(null)} onSubmit={saveEdit} onDelete={deleteEvent} />
       <NoticeDialog notice={selectedNotice} onClose={() => setSelectedNotice(null)} />
+      <GradeDialog open={gradeOpen} profile={profile} gradeEvents={gradeEvents} onClose={() => setGradeOpen(false)} />
     </>
   );
+}
+
+function matchesCategoryView(categoryView) {
+  return (event) => {
+    if (categoryView === "course") return event.type === "course" || event.type === "registration" || event.type === "grade";
+    if (categoryView === "assignment") return event.type === "assignment";
+    if (categoryView === "attendance") return event.type === "attendance" || event.type === "substitute";
+    return true;
+  };
 }
 
 function useStoredEvents() {
@@ -304,6 +334,33 @@ function NoticePanel({ notices, onSelect }) {
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+function ProfilePanel({ profile, gradeEvents, onOpenGrades }) {
+  return (
+    <section className="panel profile-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">my status</p>
+          <h2>내 상태</h2>
+        </div>
+      </div>
+      <div className="identity-card">
+        <UserRound />
+        <div>
+          <strong>{profile.name || "이름 수집 전"}</strong>
+          <span>{profile.department || "학과 수집 전"}</span>
+        </div>
+      </div>
+      <button className="grade-card" onClick={onOpenGrades}>
+        <GraduationCap />
+        <div>
+          <span>총학점 / 성적</span>
+          <strong>{profile.credits || profile.grade || (gradeEvents.length ? `${gradeEvents.length}개 항목` : "수집 전")}</strong>
+        </div>
+      </button>
     </section>
   );
 }
@@ -407,8 +464,10 @@ function EventForm({ title, onClose, onSubmit }) {
         <select name="type" required>
           <option value="assignment">과제물</option>
           <option value="attendance">출석수업</option>
+          <option value="substitute">출석대체</option>
           <option value="registration">수강신청</option>
           <option value="course">수강정보</option>
+          <option value="grade">학점</option>
           <option value="notice">공지</option>
         </select>
       </label>
@@ -485,14 +544,21 @@ function NoticeDialog({ notice, onClose }) {
               <X />
             </button>
           </div>
-          <div className="notice-summary">
+          <div className="notice-summary subtle">
             <FileText />
             <div>
               <strong>{notice.title}</strong>
               <span>{formatDate(notice)}</span>
             </div>
           </div>
-          <p className="notice-summary-body">{summarizeNotice(notice)}</p>
+          <div className="notice-summary-list">
+            {getNoticeSummaryItems(notice).map((item, index) => (
+              <div key={`${item.label}-${index}`} className="notice-summary-point">
+                <span>{item.label}</span>
+                <strong>{item.text}</strong>
+              </div>
+            ))}
+          </div>
           {notice.link ? (
             <a className="primary-link-button" href={notice.link} target="_blank" rel="noreferrer">
               <ExternalLink /> 원문 공지 열기
@@ -500,6 +566,43 @@ function NoticeDialog({ notice, onClose }) {
           ) : null}
         </div>
       ) : null}
+    </Modal>
+  );
+}
+
+function GradeDialog({ open, profile, gradeEvents, onClose }) {
+  return (
+    <Modal open={open} onClose={onClose}>
+      <div className="dialog-card">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">grade</p>
+            <h2>학점 / 성적</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="닫기">
+            <X />
+          </button>
+        </div>
+        <div className="notice-summary">
+          <BookOpen />
+          <div>
+            <strong>{profile.credits || profile.grade || "학점/성적 상세 수집 전"}</strong>
+            <span>{profile.name || ""} {profile.department || ""}</span>
+          </div>
+        </div>
+        {!gradeEvents.length ? (
+          <p className="hint">성적/학점 상세 화면 URL을 KNOU_EXTRA_URLS에 추가하면 동기화 후 여기에 표시됩니다.</p>
+        ) : (
+          <div className="event-list">
+            {gradeEvents.map((event) => (
+              <div key={event.id} className="notice-summary-point">
+                <span>{formatDate(event)}</span>
+                <strong>{event.title}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }
@@ -523,23 +626,15 @@ function Modal({ open, onClose, children }) {
   );
 }
 
-async function loadSyncedEvents() {
+async function loadSyncedPayload() {
   try {
     const response = await fetch("./data/knou-events.json", { cache: "no-store" });
     if (!response.ok) return null;
     const payload = await response.json();
-    return Array.isArray(payload.events) ? payload.events : null;
+    return Array.isArray(payload.events) ? payload : null;
   } catch {
     return null;
   }
-}
-
-function matchesCurrentView(activeFilter, searchTerm) {
-  return (event) => {
-    const matchesFilter = activeFilter === "all" || event.type === activeFilter;
-    const haystack = `${event.title} ${event.note || ""} ${typeLabels[event.type] || ""}`.toLowerCase();
-    return matchesFilter && (!searchTerm || haystack.includes(searchTerm.toLowerCase()));
-  };
 }
 
 function exportData(events) {
@@ -574,6 +669,7 @@ function sortByUrgency(a, b) {
 }
 
 function statusClass(event) {
+  if (isMissedEvent(event)) return "overdue";
   const diff = "diff" in event ? event.diff : getDayDiff(event.date);
   if (diff < 0) return "overdue";
   if (diff <= 7) return "soon";
@@ -581,12 +677,20 @@ function statusClass(event) {
 }
 
 function statusText(event) {
+  if (isMissedEvent(event)) return "놓침";
+  if (event.status === "submitted") return "제출완료";
+  if (event.status === "graded") return "평가완료";
+  if (event.status === "available") return "신청가능";
   const diff = "diff" in event ? event.diff : getDayDiff(event.date);
   if (diff < 0) return `${Math.abs(diff)}일 지연`;
   if (diff === 0) return "오늘";
   if (diff === 1) return "내일";
   if (diff <= 7) return `${diff}일 남음`;
   return "예정";
+}
+
+function isMissedEvent(event) {
+  return event.status === "missed" || (!event.done && getDayDiff(event.date) < 0);
 }
 
 function formatDate(event) {
@@ -606,12 +710,13 @@ function formatShortDate(date) {
   }).format(new Date(`${date}T00:00:00`));
 }
 
-function summarizeNotice(notice) {
-  const raw = notice.note || notice.title;
-  return raw
+function getNoticeSummaryItems(notice) {
+  if (Array.isArray(notice.summary) && notice.summary.length) return notice.summary;
+  const raw = (notice.note || notice.title)
     .replace(/^.*공지:\s*/, "")
     .replace(/\s*첨부파일\s*\d+\s*개\s*있음\s*$/, "")
     .trim();
+  return [{ label: "요약", text: raw || notice.title }];
 }
 
 function formatToday() {
