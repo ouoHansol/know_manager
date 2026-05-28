@@ -6,7 +6,7 @@
 
 - App: `1.0.0`
 - Runtime: Node.js 20 이상 권장
-- Frontend: React + Vite
+- Frontend: React + TypeScript + Vite
 - Sync: Playwright + dotenv
 - License: MIT
 
@@ -99,7 +99,7 @@ GitHub Pages에서 주의할 점:
 ## 구조
 
 ```text
-src/main.jsx              React 앱
+src/main.tsx              React TypeScript 앱
 src/styles.css            화면 스타일
 scripts/knou-sync.mjs     자동 로그인/정보 수집
 scripts/inspect-knou.mjs  학교 화면 진단용

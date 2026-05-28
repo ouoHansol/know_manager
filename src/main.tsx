@@ -20,7 +20,47 @@ import "./styles.css";
 
 const STORAGE_KEY = "knou-essential-manager-v2";
 
-const typeLabels = {
+type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "notice";
+type Priority = "high" | "normal" | "low";
+type EventStatus = "open" | "missed" | "submitted" | "graded" | "available" | "complete";
+type CategoryView = "course" | "assignment" | "attendance";
+type CompletionView = "open" | "done";
+
+type NoticeSummaryItem = {
+  label: string;
+  text: string;
+};
+
+type KnouEvent = {
+  id: string;
+  type: EventType;
+  title: string;
+  date: string;
+  time?: string;
+  priority?: Priority;
+  link?: string;
+  note?: string;
+  done: boolean;
+  status?: EventStatus;
+  summary?: NoticeSummaryItem[];
+  diff?: number;
+};
+
+type Profile = {
+  name?: string;
+  department?: string;
+  credits?: string;
+  grade?: string;
+};
+
+type SyncedPayload = {
+  events: KnouEvent[];
+  profile?: Profile;
+};
+
+type SetEvents = React.Dispatch<React.SetStateAction<KnouEvent[]>>;
+
+const typeLabels: Record<EventType, string> = {
   assignment: "과제물",
   attendance: "출석수업",
   registration: "수강신청",
@@ -32,13 +72,13 @@ const typeLabels = {
 
 function App() {
   const [events, setEvents] = useStoredEvents();
-  const [categoryView, setCategoryView] = useState("course");
-  const [profile, setProfile] = useState({});
-  const [completionView, setCompletionView] = useState("open");
+  const [categoryView, setCategoryView] = useState<CategoryView>("course");
+  const [profile, setProfile] = useState<Profile>({});
+  const [completionView, setCompletionView] = useState<CompletionView>("open");
   const [addOpen, setAddOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [selectedNotice, setSelectedNotice] = useState(null);
+  const [editing, setEditing] = useState<KnouEvent | null>(null);
+  const [selectedNotice, setSelectedNotice] = useState<KnouEvent | null>(null);
   const [gradeOpen, setGradeOpen] = useState(false);
 
   useEffect(() => {
@@ -57,7 +97,6 @@ function App() {
   const openEvents = scheduleEvents.filter((event) => !event.done);
   const overdue = openEvents.filter((event) => getDayDiff(event.date) < 0);
   const missedEvents = scheduleEvents.filter(isMissedEvent).sort(sortByDate);
-  const todoEvents = scheduleEvents.filter((event) => !event.done && !isMissedEvent(event));
   const doneEvents = scheduleEvents.filter((event) => event.done && event.status !== "missed");
   const gradeEvents = scheduleEvents.filter((event) => event.type === "grade").sort(sortByDate);
   const soon = openEvents.filter((event) => {
@@ -81,37 +120,49 @@ function App() {
       .slice(0, 8);
   }, [scheduleEvents]);
 
-  function addEvent(formData) {
+  function addEvent(formData: FormData) {
+    const type = formData.get("type");
+    const title = formData.get("title");
+    const date = formData.get("date");
+    const time = formData.get("time");
+    const priority = formData.get("priority");
+    const link = formData.get("link");
+    const note = formData.get("note");
+
     setEvents((current) => [
       ...current,
       {
         id: crypto.randomUUID(),
-        type: formData.get("type"),
-        title: formData.get("title").trim(),
-        date: formData.get("date"),
-        time: formData.get("time"),
-        priority: formData.get("priority"),
-        link: formData.get("link").trim(),
-        note: formData.get("note").trim(),
+        type: isEventType(type) ? type : "assignment",
+        title: stringifyFormValue(title).trim(),
+        date: stringifyFormValue(date),
+        time: stringifyFormValue(time),
+        priority: isPriority(priority) ? priority : "normal",
+        link: stringifyFormValue(link).trim(),
+        note: stringifyFormValue(note).trim(),
         done: false,
       },
     ]);
     setAddOpen(false);
   }
 
-  function toggleDone(id) {
+  function toggleDone(id: string) {
     setEvents((current) => current.map((event) => (event.id === id ? { ...event, done: !event.done } : event)));
   }
 
-  function saveEdit(formData) {
+  function saveEdit(formData: FormData) {
+    if (!editing) return;
+    const title = formData.get("title");
+    const date = formData.get("date");
+    const note = formData.get("note");
     setEvents((current) =>
       current.map((event) =>
         event.id === editing.id
           ? {
               ...event,
-              title: formData.get("title").trim(),
-              date: formData.get("date"),
-              note: formData.get("note").trim(),
+              title: stringifyFormValue(title).trim(),
+              date: stringifyFormValue(date),
+              note: stringifyFormValue(note).trim(),
             }
           : event
       )
@@ -119,7 +170,7 @@ function App() {
     setEditing(null);
   }
 
-  function deleteEvent(id) {
+  function deleteEvent(id: string) {
     setEvents((current) => current.filter((event) => event.id !== id));
     setEditing(null);
   }
@@ -202,21 +253,21 @@ function App() {
               action={
                 <div className="toolbar">
                   <div className="segmented category-tabs" role="tablist" aria-label="일정 유형">
-                    {[
+                    {([
                       ["course", "수강"],
                       ["assignment", "과제물"],
                       ["attendance", "출석"],
-                    ].map(([value, label]) => (
+                    ] satisfies Array<[CategoryView, string]>).map(([value, label]) => (
                       <button key={value} className={`filter ${categoryView === value ? "active" : ""}`} onClick={() => setCategoryView(value)}>
                         {label}
                       </button>
                     ))}
                   </div>
                   <div className="segmented compact" role="tablist" aria-label="일정 보기">
-                    {[
+                    {([
                       ["open", "미완료"],
                       ["done", "완료"],
-                    ].map(([value, label]) => (
+                    ] satisfies Array<[CompletionView, string]>).map(([value, label]) => (
                       <button key={value} className={`filter ${completionView === value ? "active" : ""}`} onClick={() => setCompletionView(value)}>
                         {label}
                       </button>
@@ -245,8 +296,8 @@ function App() {
   );
 }
 
-function matchesCategoryView(categoryView) {
-  return (event) => {
+function matchesCategoryView(categoryView: CategoryView) {
+  return (event: KnouEvent) => {
     if (categoryView === "course") return event.type === "course" || event.type === "registration" || event.type === "grade";
     if (categoryView === "assignment") return event.type === "assignment";
     if (categoryView === "attendance") return event.type === "attendance" || event.type === "substitute";
@@ -254,7 +305,7 @@ function matchesCategoryView(categoryView) {
   };
 }
 
-function useStoredEvents() {
+function useStoredEvents(): [KnouEvent[], SetEvents] {
   const [events, setEventsState] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return [];
@@ -266,8 +317,8 @@ function useStoredEvents() {
     }
   });
 
-  const setEvents = useCallback((updater) => {
-    setEventsState((current) => {
+  const setEvents = useCallback<SetEvents>((updater) => {
+    setEventsState((current: KnouEvent[]) => {
       const next = typeof updater === "function" ? updater(current) : updater;
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ events: next }));
       return next;
@@ -277,7 +328,7 @@ function useStoredEvents() {
   return [events, setEvents];
 }
 
-function Metric({ className = "", label, value }) {
+function Metric({ className = "", label, value }: { className?: string; label: string; value: string | number }) {
   return (
     <article className={`metric ${className}`}>
       <span>{label}</span>
@@ -286,7 +337,17 @@ function Metric({ className = "", label, value }) {
   );
 }
 
-function Panel({ eyebrow, title, action, children }) {
+function Panel({
+  eyebrow,
+  title,
+  action,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -301,7 +362,17 @@ function Panel({ eyebrow, title, action, children }) {
   );
 }
 
-function EventList({ events, emptyText, onToggle, onEdit }) {
+function EventList({
+  events,
+  emptyText,
+  onToggle,
+  onEdit,
+}: {
+  events: KnouEvent[];
+  emptyText: string;
+  onToggle: (id: string) => void;
+  onEdit: (event: KnouEvent) => void;
+}) {
   if (!events.length) return <div className="empty">{emptyText}</div>;
 
   return (
@@ -313,7 +384,7 @@ function EventList({ events, emptyText, onToggle, onEdit }) {
   );
 }
 
-function NoticePanel({ notices, onSelect }) {
+function NoticePanel({ notices, onSelect }: { notices: KnouEvent[]; onSelect: (notice: KnouEvent) => void }) {
   return (
     <section className="panel notice-panel">
       <div className="panel-heading">
@@ -338,7 +409,15 @@ function NoticePanel({ notices, onSelect }) {
   );
 }
 
-function ProfilePanel({ profile, gradeEvents, onOpenGrades }) {
+function ProfilePanel({
+  profile,
+  gradeEvents,
+  onOpenGrades,
+}: {
+  profile: Profile;
+  gradeEvents: KnouEvent[];
+  onOpenGrades: () => void;
+}) {
   return (
     <section className="panel profile-panel">
       <div className="panel-heading">
@@ -365,7 +444,15 @@ function ProfilePanel({ profile, gradeEvents, onOpenGrades }) {
   );
 }
 
-function EventCard({ event, onToggle, onEdit }) {
+function EventCard({
+  event,
+  onToggle,
+  onEdit,
+}: {
+  event: KnouEvent;
+  onToggle: (id: string) => void;
+  onEdit: (event: KnouEvent) => void;
+}) {
   const status = event.done ? "" : statusClass(event);
 
   return (
@@ -393,7 +480,7 @@ function EventCard({ event, onToggle, onEdit }) {
   );
 }
 
-function AddDialog({ open, onClose, onSubmit }) {
+function AddDialog({ open, onClose, onSubmit }: { open: boolean; onClose: () => void; onSubmit: (formData: FormData) => void }) {
   return (
     <Modal open={open} onClose={onClose}>
       <EventForm title="항목 추가" onClose={onClose} onSubmit={onSubmit} />
@@ -401,7 +488,17 @@ function AddDialog({ open, onClose, onSubmit }) {
   );
 }
 
-function EditDialog({ event, onClose, onSubmit, onDelete }) {
+function EditDialog({
+  event,
+  onClose,
+  onSubmit,
+  onDelete,
+}: {
+  event: KnouEvent | null;
+  onClose: () => void;
+  onSubmit: (formData: FormData) => void;
+  onDelete: (id: string) => void;
+}) {
   return (
     <Modal open={Boolean(event)} onClose={onClose}>
       {event ? (
@@ -428,7 +525,7 @@ function EditDialog({ event, onClose, onSubmit, onDelete }) {
           </label>
           <label>
             메모
-            <textarea name="note" rows="3" defaultValue={event.note || ""} />
+            <textarea name="note" rows={3} defaultValue={event.note || ""} />
           </label>
           <menu>
             <button className="danger-button" type="button" onClick={() => onDelete(event.id)}>
@@ -444,7 +541,15 @@ function EditDialog({ event, onClose, onSubmit, onDelete }) {
   );
 }
 
-function EventForm({ title, onClose, onSubmit }) {
+function EventForm({
+  title,
+  onClose,
+  onSubmit,
+}: {
+  title: string;
+  onClose: () => void;
+  onSubmit: (formData: FormData) => void;
+}) {
   return (
     <form
       className="dialog-card"
@@ -497,7 +602,7 @@ function EventForm({ title, onClose, onSubmit }) {
       </label>
       <label>
         메모
-        <textarea name="note" rows="3" placeholder="제출 방식, 강의실, 준비물 등" />
+        <textarea name="note" rows={3} placeholder="제출 방식, 강의실, 준비물 등" />
       </label>
       <button className="primary-button" type="submit">
         <Plus /> 추가
@@ -506,7 +611,7 @@ function EventForm({ title, onClose, onSubmit }) {
   );
 }
 
-function SyncDialog({ open, onClose }) {
+function SyncDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Modal open={open} onClose={onClose}>
       <div className="dialog-card">
@@ -530,7 +635,7 @@ function SyncDialog({ open, onClose }) {
   );
 }
 
-function NoticeDialog({ notice, onClose }) {
+function NoticeDialog({ notice, onClose }: { notice: KnouEvent | null; onClose: () => void }) {
   return (
     <Modal open={Boolean(notice)} onClose={onClose}>
       {notice ? (
@@ -570,7 +675,17 @@ function NoticeDialog({ notice, onClose }) {
   );
 }
 
-function GradeDialog({ open, profile, gradeEvents, onClose }) {
+function GradeDialog({
+  open,
+  profile,
+  gradeEvents,
+  onClose,
+}: {
+  open: boolean;
+  profile: Profile;
+  gradeEvents: KnouEvent[];
+  onClose: () => void;
+}) {
   return (
     <Modal open={open} onClose={onClose}>
       <div className="dialog-card">
@@ -607,9 +722,9 @@ function GradeDialog({ open, profile, gradeEvents, onClose }) {
   );
 }
 
-function Modal({ open, onClose, children }) {
+function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
   useEffect(() => {
-    function onKeyDown(event) {
+    function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
     }
     if (open) window.addEventListener("keydown", onKeyDown);
@@ -626,7 +741,7 @@ function Modal({ open, onClose, children }) {
   );
 }
 
-async function loadSyncedPayload() {
+async function loadSyncedPayload(): Promise<SyncedPayload | null> {
   try {
     const response = await fetch("./data/knou-events.json", { cache: "no-store" });
     if (!response.ok) return null;
@@ -637,7 +752,7 @@ async function loadSyncedPayload() {
   }
 }
 
-function exportData(events) {
+function exportData(events: KnouEvent[]) {
   const blob = new Blob([JSON.stringify({ events }, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -647,41 +762,43 @@ function exportData(events) {
   URL.revokeObjectURL(url);
 }
 
-function getDayDiff(date) {
+function getDayDiff(date: string) {
   const today = new Date();
   const base = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const target = new Date(`${date}T00:00:00`);
-  return Math.round((target - base) / 86400000);
+  return Math.round((target.getTime() - base.getTime()) / 86400000);
 }
 
-function sortByDate(a, b) {
+function sortByDate(a: KnouEvent, b: KnouEvent) {
   return `${a.date} ${a.time || "23:59"}`.localeCompare(`${b.date} ${b.time || "23:59"}`);
 }
 
-function sortByNewest(a, b) {
+function sortByNewest(a: KnouEvent, b: KnouEvent) {
   return `${b.date} ${b.time || "23:59"}`.localeCompare(`${a.date} ${a.time || "23:59"}`);
 }
 
-function sortByUrgency(a, b) {
-  if (a.diff !== b.diff) return a.diff - b.diff;
+function sortByUrgency(a: KnouEvent, b: KnouEvent) {
+  const aDiff = a.diff ?? getDayDiff(a.date);
+  const bDiff = b.diff ?? getDayDiff(b.date);
+  if (aDiff !== bDiff) return aDiff - bDiff;
   const score = { high: 0, normal: 1, low: 2 };
-  return (score[a.priority] ?? 1) - (score[b.priority] ?? 1);
+  return (score[a.priority ?? "normal"] ?? 1) - (score[b.priority ?? "normal"] ?? 1);
 }
 
-function statusClass(event) {
+function statusClass(event: KnouEvent) {
   if (isMissedEvent(event)) return "overdue";
-  const diff = "diff" in event ? event.diff : getDayDiff(event.date);
+  const diff = event.diff ?? getDayDiff(event.date);
   if (diff < 0) return "overdue";
   if (diff <= 7) return "soon";
   return "";
 }
 
-function statusText(event) {
+function statusText(event: KnouEvent) {
   if (isMissedEvent(event)) return "놓침";
   if (event.status === "submitted") return "제출완료";
   if (event.status === "graded") return "평가완료";
   if (event.status === "available") return "신청가능";
-  const diff = "diff" in event ? event.diff : getDayDiff(event.date);
+  const diff = event.diff ?? getDayDiff(event.date);
   if (diff < 0) return `${Math.abs(diff)}일 지연`;
   if (diff === 0) return "오늘";
   if (diff === 1) return "내일";
@@ -689,11 +806,11 @@ function statusText(event) {
   return "예정";
 }
 
-function isMissedEvent(event) {
+function isMissedEvent(event: KnouEvent) {
   return event.status === "missed" || (!event.done && getDayDiff(event.date) < 0);
 }
 
-function formatDate(event) {
+function formatDate(event: KnouEvent) {
   const date = new Date(`${event.date}T00:00:00`);
   const label = new Intl.DateTimeFormat("ko-KR", {
     month: "numeric",
@@ -703,14 +820,14 @@ function formatDate(event) {
   return event.time ? `${label} ${event.time}` : label;
 }
 
-function formatShortDate(date) {
+function formatShortDate(date: string) {
   return new Intl.DateTimeFormat("ko-KR", {
     month: "numeric",
     day: "numeric",
   }).format(new Date(`${date}T00:00:00`));
 }
 
-function getNoticeSummaryItems(notice) {
+function getNoticeSummaryItems(notice: KnouEvent): NoticeSummaryItem[] {
   if (Array.isArray(notice.summary) && notice.summary.length) return notice.summary;
   const raw = (notice.note || notice.title)
     .replace(/^.*공지:\s*/, "")
@@ -719,12 +836,21 @@ function getNoticeSummaryItems(notice) {
   return [{ label: "요약", text: raw || notice.title }];
 }
 
-function formatToday() {
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "numeric",
-    day: "numeric",
-    weekday: "short",
-  }).format(new Date());
+function stringifyFormValue(value: FormDataEntryValue | null): string {
+  return typeof value === "string" ? value : "";
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+function isEventType(value: FormDataEntryValue | null): value is EventType {
+  return typeof value === "string" && value in typeLabels;
+}
+
+function isPriority(value: FormDataEntryValue | null): value is Priority {
+  return value === "high" || value === "normal" || value === "low";
+}
+
+const root = document.getElementById("root");
+if (!root) {
+  throw new Error("Root element not found");
+}
+
+createRoot(root).render(<App />);
