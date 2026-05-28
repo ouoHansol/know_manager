@@ -469,7 +469,7 @@ function EventCard({
   const status = event.done ? "" : statusClass(event);
 
   return (
-    <article className={`event-item ${event.done ? "done" : status}`}>
+    <article className={`event-item ${event.type} ${event.done ? "done" : status}`}>
       <input className="check" type="checkbox" checked={event.done} onChange={() => onToggle(event.id)} aria-label="완료 처리" />
       <div className="event-main">
         <div className="event-title">

@@ -350,6 +350,15 @@ a svg,
   opacity: 0.58;
 }
 
+.event-item.exam {
+  border-left-color: var(--red);
+}
+
+.event-item.exam .event-note {
+  color: var(--red);
+  font-weight: 900;
+}
+
 .check {
   width: 24px;
   height: 24px;

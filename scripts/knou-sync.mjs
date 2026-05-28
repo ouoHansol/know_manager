@@ -46,6 +46,7 @@ try {
 
   const mobileProfile = await collectMobileKnou(page, collected);
   profile = { ...profile, ...mobileProfile };
+  await collectExamApplicationStats(page, collected);
 
   await openAndMaybeLogin(page, config.startUrl);
   await collectNotices(page, "방통대 공지", collected);
@@ -434,48 +435,114 @@ function parseMobileGrades(text, source, url) {
 }
 
 function parseMobileCourseList(text, source, url) {
-  const lines = normalizeLines(text);
-  const yearTerm = lines.find((line) => /20\d{2}학년도\s+\d학기/.test(line)) || "";
-  const courseNames = unique(lines.filter((line) => isCourseLike(line)));
-  const dueLine = lines.find((line) => /형성평가.*20\d{2}[./-]\d{1,2}[./-]\d{1,2}/.test(line));
-  const dueDate = dueLine ? findDate(dueLine)?.date : null;
-  const examEvents = courseNames.flatMap((course, index) => {
-    const courseIndex = lines.findIndex((line) => line === course);
-    const nextCourseIndex = courseNames[index + 1] ? lines.findIndex((line, lineIndex) => lineIndex > courseIndex && line === courseNames[index + 1]) : -1;
-    const blockEnd = nextCourseIndex > courseIndex ? nextCourseIndex : courseIndex + 10;
-    const block = lines.slice(courseIndex, blockEnd).join(" ");
-    const events = [];
-    if (/기말\s*시험/.test(block)) {
-      events.push({
-        id: stableId(`mobile-final-exam|${course}|${yearTerm}`),
+  return [];
+}
+
+async function collectExamApplicationStats(page, collected) {
+  const url = "https://applyibt.knou.ac.kr/examneApplicationStats/index.do";
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+  await loginApplyIbtIfNeeded(page);
+  await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(1000);
+
+  const scheduleButton = page.getByText("시험일정확인", { exact: true }).first();
+  if ((await scheduleButton.count().catch(() => 0)) > 0) {
+    await scheduleButton.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+  }
+
+  const text = await page.locator("body").innerText({ timeout: 10000 }).catch(() => "");
+  const events = parseApplyIbtExamSchedule(text, page.url());
+  collected.push(...events);
+}
+
+async function loginApplyIbtIfNeeded(page) {
+  const idInput = page.locator("#logInId, input[name='logInId'], input[type='text']").first();
+  const passwordInput = page.locator("input[name='pwd'], input[type='password']").first();
+  if ((await idInput.count().catch(() => 0)) === 0 || (await passwordInput.count().catch(() => 0)) === 0) return;
+  const visible = await passwordInput.isVisible().catch(() => false);
+  if (!visible) return;
+  await idInput.fill(config.id);
+  await passwordInput.fill(config.password);
+  await Promise.all([
+    page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {}),
+    passwordInput.press("Enter"),
+  ]);
+}
+
+function parseApplyIbtExamSchedule(text, url) {
+  const normalized = text.replace(/\r/g, "");
+  const detailIndex = normalized.indexOf("시험신청 상세내용");
+  const applicationStatus = normalized.match(/대상\s*과목\s*:\s*(\d+)과목\s*중\s*(\d+)과목\s*신청/);
+  const period = normalized.match(/시험신청기간\s*:\s*(20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*~\s*(20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2})/);
+
+  if (detailIndex < 0) {
+    const endDate = period?.[2]?.slice(0, 10) || "";
+    return [
+      {
+        id: stableId(`applyibt-need-selection|${endDate || todayIso()}`),
         type: "exam",
-        title: `${course} 기말 시험`,
-        date: "",
-        time: "",
+        title: "기말시험 일자 선택 필요!",
+        date: endDate,
+        time: period?.[2]?.slice(11) || "",
         priority: "high",
-        note: `${source}: ${yearTerm || "현재학기"} 기말평가 방식 - 기말 시험. 상세 일시는 학교 화면에서 아직 비어 있거나 확정 전입니다.`,
+        note: `*시험일자 선택 필요! 시험신청현황에서 시험일자와 시험장을 선택하세요.${applicationStatus ? ` (${applicationStatus[2]}/${applicationStatus[1]}과목 신청)` : ""}`,
         link: url,
-        status: "open",
+        status: "available",
         done: false,
-      });
-    }
-    if (/중간\s*시험/.test(block)) {
-      events.push({
-        id: stableId(`mobile-mid-exam|${course}|${yearTerm}`),
+      },
+    ];
+  }
+
+  const detail = normalized.slice(detailIndex);
+  const blocks = [...detail.matchAll(/(?:^|\n)\s*(\d+)\s*시험장\s*([^\n]+?)(?:\s*지도보기)?\s*\n시험일\s*(20\d{2}-\d{2}-\d{2})[^\n]*\n차시\s*([^\n]+)\n시험시간\s*([^\n]+)\n응시과목\s*([\s\S]*?)(?=\n\s*\d+\s*시험장|\n\s*목록|\n\s*공석조회|$)/g)];
+
+  if (!blocks.length) {
+    const endDate = period?.[2]?.slice(0, 10) || "";
+    return [
+      {
+        id: stableId(`applyibt-unparsed|${endDate || todayIso()}`),
         type: "exam",
-        title: `${course} 중간 시험`,
-        date: "",
-        time: "",
-        priority: "normal",
-        note: `${source}: ${yearTerm || "현재학기"} 중간평가 방식 - 중간 시험. 상세 일시는 학교 화면에서 아직 비어 있거나 확정 전입니다.`,
+        title: "기말시험 일자 확인 필요!",
+        date: endDate,
+        time: period?.[2]?.slice(11) || "",
+        priority: "high",
+        note: "*시험일자 확인 필요! 시험신청현황에 신청 내역은 있으나 상세 일자/장소를 자동 파싱하지 못했습니다.",
         link: url,
-        status: "open",
+        status: "available",
         done: false,
-      });
-    }
-    return events;
+      },
+    ];
+  }
+
+  return blocks.map((match) => {
+    const round = match[1].trim();
+    const place = match[2].replace(/\s*지도보기\s*$/, "").trim();
+    const date = match[3].trim();
+    const roundLabel = match[4].replace(/\s*\[.*$/, "").trim();
+    const examTime = match[5].replace(/\s*※.*$/, "").trim();
+    const subjects = match[6]
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.split("_").at(-1) || line)
+      .join(", ");
+    const startTime = examTime.match(/\b([0-2]?\d:[0-5]\d)\b/)?.[1] || "";
+
+    return {
+      id: stableId(`applyibt-exam|${date}|${roundLabel}|${place}|${subjects}`),
+      type: "exam",
+      title: `기말시험 ${roundLabel || `${round}차시`}`,
+      date,
+      time: startTime,
+      priority: "high",
+      note: `*시험일자 ${date} / ${place} / ${examTime}${subjects ? ` / 응시과목: ${subjects}` : ""}`,
+      link: url,
+      status: "open",
+      done: false,
+    };
   });
-  return examEvents;
 }
 
 async function extractProfile(page) {
