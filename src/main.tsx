@@ -88,6 +88,13 @@ type SyncCredentials = {
 
 type SyncScope = (typeof SYNC_SCOPES)[number][0];
 
+type SyncStepResult = {
+  label: string;
+  count: number;
+  ok: boolean;
+  error?: string;
+};
+
 type SetEvents = React.Dispatch<React.SetStateAction<KnouEvent[]>>;
 
 const typeLabels: Record<EventType, string> = {
@@ -936,6 +943,7 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
       };
 
       const mergedPayload: SyncedPayload = { events: [], profile: {}, errors: [] };
+      const stepResults: SyncStepResult[] = [];
 
       for (const [scope, label] of SYNC_SCOPES) {
         setMessage(`${label} 동기화 중입니다. 단계별로 나눠 가져오는 중입니다.`);
@@ -944,8 +952,11 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
           mergedPayload.events = [...(mergedPayload.events || []), ...(payload.events || [])];
           mergedPayload.profile = { ...(mergedPayload.profile || {}), ...(payload.profile || {}) };
           mergedPayload.errors = [...(mergedPayload.errors || []), ...(payload.errors || [])];
+          stepResults.push({ label, count: countSyncedItems(payload), ok: true });
         } catch (error) {
-          mergedPayload.errors = [...(mergedPayload.errors || []), `${label}: ${error instanceof Error ? error.message : "실패"}`];
+          const message = error instanceof Error ? error.message : "실패";
+          mergedPayload.errors = [...(mergedPayload.errors || []), `${label}: ${message}`];
+          stepResults.push({ label, count: 0, ok: false, error: message });
         }
       }
 
@@ -965,7 +976,8 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
       onSynced(mergedPayload);
       const errorText = mergedPayload.errors?.length ? ` / 일부 오류: ${mergedPayload.errors.join(" | ")}` : "";
       const missingText = getMissingSyncCategoryText(mergedPayload);
-      setMessage(`동기화 완료: ${syncedCount}개 정보를 가져왔습니다.${missingText}${errorText}`);
+      const stepText = stepResults.map((result) => `${result.label} ${result.ok ? result.count : "실패"}`).join(", ");
+      setMessage(`동기화 완료: 일정 ${mergedPayload.events?.length || 0}개, 내 상태 ${countProfileFields(mergedPayload.profile)}개 (${stepText})${missingText}${errorText}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.");
     } finally {
