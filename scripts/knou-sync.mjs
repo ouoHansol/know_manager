@@ -80,6 +80,7 @@ export async function collectKnouData(options = {}) {
   }
 
   const events = dedupeEvents(collected);
+  profile = normalizeProfile(profile);
   return {
     syncedAt: new Date().toISOString(),
     source: "knou-playwright",
@@ -87,6 +88,13 @@ export async function collectKnouData(options = {}) {
     events,
     profile,
   };
+}
+
+function normalizeProfile(profile) {
+  if (!profile || typeof profile !== "object") return {};
+  const hasMeaningfulProfile = Boolean(profile.name || profile.department || profile.credits || profile.grade);
+  if (hasMeaningfulProfile) return profile;
+  return {};
 }
 
 async function getBrowserLaunchOptions(headless) {
