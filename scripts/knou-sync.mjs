@@ -383,7 +383,26 @@ async function collectMobileKnou(page, collected, scope = "mobile") {
     }
   }
 
+  if ((scope === "mobile" || scope === "courses") && !collected.some((event) => event.type === "course")) {
+    collected.push(createCourseFallback());
+  }
+
   return profile;
+}
+
+function createCourseFallback() {
+  return {
+    id: stableId(`course-fallback|${todayIso()}`),
+    type: "course",
+    title: "형성평가 확인 필요",
+    date: "",
+    time: "",
+    priority: "high",
+    note: "U-KNOU: 형성평가 진도율과 마감일을 자동으로 가져오지 못했습니다. 수강목록에서 확인하세요.",
+    link: "https://m.knou.ac.kr/",
+    status: "open",
+    done: false,
+  };
 }
 
 async function safeOpenMobilePage(page, url) {
@@ -556,21 +575,40 @@ function parseMobileCourseList(text, source, url) {
 
 async function collectExamApplicationStats(page, collected) {
   const url = "https://applyibt.knou.ac.kr/examneApplicationStats/index.do";
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-  await loginApplyIbtIfNeeded(page);
-  await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-  await safePageWait(page, 1000);
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    await loginApplyIbtIfNeeded(page);
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    await safePageWait(page, 1000);
 
-  const scheduleButton = page.getByText(/시험\s*일정\s*확인|일정\s*확인/).first();
-  if ((await scheduleButton.count().catch(() => 0)) > 0) {
-    await scheduleButton.click({ timeout: 5000 }).catch(() => {});
-    await safePageWait(page, 1200);
+    const scheduleButton = page.getByText(/시험\s*일정\s*확인|일정\s*확인/).first();
+    if ((await scheduleButton.count().catch(() => 0)) > 0) {
+      await scheduleButton.click({ timeout: 5000 }).catch(() => {});
+      await safePageWait(page, 1200);
+    }
+
+    const text = await page.locator("body").innerText({ timeout: 10000 }).catch(() => "");
+    const events = parseApplyIbtExamSchedule(text, page.url());
+    collected.push(...(events.length ? events : [createExamFallback(url, "시험 상세 정보를 자동으로 찾지 못했습니다.")]));
+  } catch (error) {
+    collected.push(createExamFallback(url, error instanceof Error ? error.message : "시험 정보를 가져오지 못했습니다."));
   }
+}
 
-  const text = await page.locator("body").innerText({ timeout: 10000 }).catch(() => "");
-  const events = parseApplyIbtExamSchedule(text, page.url());
-  collected.push(...events);
+function createExamFallback(url, reason) {
+  return {
+    id: stableId(`exam-fallback|${todayIso()}`),
+    type: "exam",
+    title: "기말시험 일정 확인 필요",
+    date: "",
+    time: "",
+    priority: "high",
+    note: `*시험일자 확인 필요! 시험신청현황에서 시험일자와 시험장을 확인하세요. ${reason || ""}`.trim(),
+    link: url,
+    status: "available",
+    done: false,
+  };
 }
 
 async function loginApplyIbtIfNeeded(page) {
