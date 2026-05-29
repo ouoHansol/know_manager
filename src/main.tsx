@@ -24,10 +24,7 @@ const MEMO_STORAGE_KEY = "knou-essential-memos-v1";
 const PROFILE_STORAGE_KEY = "knou-essential-profile-v1";
 const CREDENTIAL_STORAGE_KEY = "knou-essential-credentials-v1";
 const SYNC_SCOPES = [
-  ["profile", "내 상태"],
-  ["courses", "수강"],
-  ["assignments", "과제물"],
-  ["attendance", "출석"],
+  ["mobile", "학습정보"],
   ["exam", "시험"],
   ["notices", "공지"],
 ] as const;
@@ -1223,10 +1220,7 @@ function countSyncedItems(payload: SyncedPayload): number {
 
 function countScopeItems(payload: SyncedPayload, scope: SyncScope): number {
   const events = payload.events || [];
-  if (scope === "profile") return countProfileFields(payload.profile);
-  if (scope === "courses") return events.filter((event) => event.type === "course" || event.type === "registration").length;
-  if (scope === "assignments") return events.filter((event) => event.type === "assignment" || event.type === "substitute").length;
-  if (scope === "attendance") return events.filter((event) => event.type === "attendance" || event.type === "substitute").length;
+  if (scope === "mobile") return events.length + countProfileFields(payload.profile);
   if (scope === "exam") return events.filter((event) => event.type === "exam").length;
   if (scope === "notices") return events.filter((event) => event.type === "notice").length;
   return events.length;
