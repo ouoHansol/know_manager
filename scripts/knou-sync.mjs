@@ -48,7 +48,14 @@ export async function collectKnouData(options = {}) {
   let profile = {};
 
   try {
-    if (config.scope === "all") {
+    if (config.scope === "essential") {
+      const mobileProfile = await collectMobileKnou(page, collected);
+      profile = { ...profile, ...mobileProfile };
+      await runIsolatedPageStep(context, errors, "시험", async (examPage) => {
+        await collectExamApplicationStats(examPage, collected);
+      });
+      await collectNotices(page, "방통대 공지", collected, { includeDetail: false, maxItems: 10 });
+    } else if (config.scope === "all") {
       await openAndMaybeLogin(page, "https://ucampus.knou.ac.kr/ekp/user/login/retrieveULOLogin.do");
       profile = await extractProfile(page);
       await collectFromCurrentPage(page, "U-KNOU", collected);
@@ -88,6 +95,24 @@ export async function collectKnouData(options = {}) {
     events,
     profile,
   };
+}
+
+async function runIsolatedPageStep(context, errors, label, task, timeoutMs = 22000) {
+  const stepPage = await context.newPage();
+  let timeoutId;
+  try {
+    await Promise.race([
+      task(stepPage),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label} 동기화가 제한시간을 넘었습니다.`)), timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    errors.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    clearTimeout(timeoutId);
+    await stepPage.close().catch(() => {});
+  }
 }
 
 function normalizeProfile(profile) {
