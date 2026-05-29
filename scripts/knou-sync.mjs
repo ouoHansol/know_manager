@@ -548,7 +548,8 @@ function parseMobileGrades(text, source, url) {
 }
 
 function parseMobileCourseList(text, source, url) {
-  return [];
+  const lines = normalizeLines(text);
+  return parseStudyProgress(lines, source, url);
 }
 
 async function collectExamApplicationStats(page, collected) {
@@ -559,7 +560,7 @@ async function collectExamApplicationStats(page, collected) {
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
   await safePageWait(page, 1000);
 
-  const scheduleButton = page.getByText("시험일정확인", { exact: true }).first();
+  const scheduleButton = page.getByText(/시험\s*일정\s*확인|일정\s*확인/).first();
   if ((await scheduleButton.count().catch(() => 0)) > 0) {
     await scheduleButton.click({ timeout: 5000 }).catch(() => {});
     await safePageWait(page, 1200);
@@ -586,6 +587,9 @@ async function loginApplyIbtIfNeeded(page) {
 
 function parseApplyIbtExamSchedule(text, url) {
   const normalized = text.replace(/\r/g, "");
+  const genericEvents = parseGenericApplyIbtExamSchedule(normalized, url);
+  if (genericEvents.length) return genericEvents;
+
   const detailIndex = normalized.indexOf("시험신청 상세내용");
   const applicationStatus = normalized.match(/대상\s*과목\s*:\s*(\d+)과목\s*중\s*(\d+)과목\s*신청/);
   const period = normalized.match(/시험신청기간\s*:\s*(20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*~\s*(20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2})/);
@@ -656,6 +660,74 @@ function parseApplyIbtExamSchedule(text, url) {
       done: false,
     };
   });
+}
+
+function parseGenericApplyIbtExamSchedule(text, url) {
+  const blocks = splitExamBlocks(normalizeLines(text));
+  const events = [];
+
+  for (const block of blocks) {
+    const joined = block.join("\n");
+    const date = joined.match(/20\d{2}-\d{2}-\d{2}/)?.[0];
+    const timeRange = joined.match(/(?:[01]?\d|2[0-3]):[0-5]\d\s*~\s*(?:[01]?\d|2[0-3]):[0-5]\d/)?.[0];
+    if (!date || !timeRange) continue;
+
+    const place =
+      block.find((line) => /(지역대학|학습관|시험장|캠퍼스|온라인|ZOOM)/.test(line) && !/응시과목|시험시간|시험일자/.test(line)) ||
+      block.find((line) => /(지역|학습관)/.test(line)) ||
+      "";
+    const roundLabel = joined.match(/(\d+)\s*차시/)?.[0] || `${events.length + 1}차시`;
+    const subjects = extractExamSubjects(block);
+    if (!subjects.length && !place) continue;
+
+    events.push({
+      id: stableId(`applyibt-selected|${date}|${timeRange}|${subjects.join(",") || roundLabel}`),
+      type: "exam",
+      title: `기말시험 ${roundLabel}`,
+      date,
+      time: timeRange.split("~")[0].trim(),
+      priority: "high",
+      note: `*시험일자 ${date} / ${place || "시험장 확인 필요"} / ${timeRange}${subjects.length ? ` / 응시과목: ${subjects.join(", ")}` : ""}`,
+      link: url,
+      status: "open",
+      done: false,
+    });
+  }
+
+  return events;
+}
+
+function splitExamBlocks(lines) {
+  const blocks = [];
+  let current = [];
+
+  for (const line of lines) {
+    const startsBlock = /(?:^|\s)\d+\s*차시|(?:^|\s)\d+\s*시험/.test(line);
+    if (startsBlock && current.length) {
+      blocks.push(current);
+      current = [];
+    }
+    current.push(line);
+  }
+  if (current.length) blocks.push(current);
+  return blocks.filter((block) => block.some((line) => /20\d{2}-\d{2}-\d{2}/.test(line) || /응시과목/.test(line)));
+}
+
+function extractExamSubjects(lines) {
+  const subjects = [];
+  const subjectIndex = lines.findIndex((line) => /응시과목/.test(line));
+  const sourceLines = subjectIndex >= 0 ? lines.slice(subjectIndex) : lines;
+
+  for (const line of sourceLines) {
+    const cleaned = line
+      .replace(/^응시과목\s*:?\s*/, "")
+      .replace(/^\d+\s*/, "")
+      .trim();
+    if (!cleaned || /응시과목|목록|공석|조회|시험일자|시험시간|차시|지역대학|학습관/.test(cleaned)) continue;
+    if (isCourseLike(cleaned) && !subjects.includes(cleaned)) subjects.push(cleaned);
+  }
+
+  return subjects.slice(0, 8);
 }
 
 async function extractProfile(page) {
@@ -838,7 +910,7 @@ function cleanupTitle(line, rawDate, type) {
 
 function parseStudyProgress(lines, source, url) {
   const events = [];
-  const periodLine = lines.find((line) => line.includes("형성평가 기간"));
+  const periodLine = lines.find((line) => /형성평가\s*기간|뺤꽦.?됯?.?湲곌컙/.test(line));
   const periodDates = periodLine ? [...periodLine.matchAll(/20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/g)] : [];
   const dueDate = periodDates.at(-1)?.[0]?.replaceAll(".", "-").replaceAll("/", "-");
   if (!dueDate) return events;
@@ -859,12 +931,12 @@ function parseStudyProgress(lines, source, url) {
     const course = lines[index];
     const status = lines[index + 1];
     const progress = lines[index + 2];
-    if (!status.includes("형성평가")) continue;
+    if (!/형성평가|뺤꽦.?됯?/.test(status)) continue;
     if (!/%$/.test(progress)) continue;
     if (isChromeText(course)) continue;
 
     const percent = Number(progress.replace("%", ""));
-    const completed = status.includes("완료") || percent >= 80;
+    const completed = /완료|꾨즺/.test(status) || percent >= 80;
     events.push({
       id: stableId(`course-progress|${course}|${dueDate}`),
       type: "course",

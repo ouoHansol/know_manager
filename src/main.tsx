@@ -25,6 +25,7 @@ const PROFILE_STORAGE_KEY = "knou-essential-profile-v1";
 const CREDENTIAL_STORAGE_KEY = "knou-essential-credentials-v1";
 const SYNC_SCOPES = [
   ["profile", "내 상태"],
+  ["courses", "수강"],
   ["assignments", "과제물"],
   ["attendance", "출석"],
   ["exam", "시험"],
@@ -1213,6 +1214,7 @@ function getMissingSyncCategoryText(payload: SyncedPayload): string {
   const events = payload.events || [];
   const missing = [
     countProfileFields(payload.profile) ? "" : "내 상태",
+    events.some((event) => event.type === "course" || event.type === "registration") ? "" : "수강",
     events.some((event) => event.type === "assignment" || event.type === "substitute") ? "" : "과제물",
     events.some((event) => event.type === "attendance" || event.type === "substitute") ? "" : "출석",
     events.some((event) => event.type === "exam") ? "" : "시험",
