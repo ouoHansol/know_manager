@@ -1197,7 +1197,7 @@ function mergeSyncedEvents(current: KnouEvent[], incoming: KnouEvent[]): KnouEve
   for (const event of incoming) {
     merged.set(event.id, event);
   }
-  return pruneRedundantExamPlaceholders([...merged.values()]);
+  return pruneRedundantCoursePlaceholders(pruneRedundantExamPlaceholders([...merged.values()]));
 }
 
 function pruneRedundantExamPlaceholders(events: KnouEvent[]): KnouEvent[] {
@@ -1211,6 +1211,15 @@ function pruneRedundantExamPlaceholders(events: KnouEvent[]): KnouEvent[] {
     if (event.type !== "exam") return true;
     const text = `${event.title} ${event.note || ""}`;
     return !/(일자\s*선택\s*필요|일자\s*확인\s*필요|일자 미정)/.test(text);
+  });
+}
+
+function pruneRedundantCoursePlaceholders(events: KnouEvent[]): KnouEvent[] {
+  const hasDetailedFormation = events.some((event) => event.type === "course" && /형성평가\s+\d{1,3}%/.test(`${event.title} ${event.note || ""}`));
+  if (!hasDetailedFormation) return events;
+  return events.filter((event) => {
+    if (event.type !== "course") return true;
+    return !/형성평가\s*확인\s*필요|자동으로 가져오지 못했습니다/.test(`${event.title} ${event.note || ""}`);
   });
 }
 

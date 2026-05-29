@@ -598,14 +598,13 @@ async function collectExamApplicationStats(page, collected) {
   const url = "https://applyibt.knou.ac.kr/examneApplicationStats/index.do";
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
     await loginApplyIbtIfNeeded(page);
-    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-    await safePageWait(page, 1500);
-    await waitForExamContent(page);
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    await safePageWait(page, 700);
 
     await clickExamScheduleButton(page);
-    await safePageWait(page, 2000);
+    await safePageWait(page, 1000);
     await waitForExamContent(page);
 
     const text = await page.locator("body").innerText({ timeout: 10000 }).catch(() => "");
@@ -636,7 +635,7 @@ async function waitForExamContent(page) {
     .waitForFunction(
       () => /(시험신청 상세내용|응시과목|시험일자|시험시간|차시|시험장|시험 일정)/.test(document.body?.innerText || ""),
       null,
-      { timeout: 12000 },
+      { timeout: 6000 },
     )
     .catch(() => {});
 }
@@ -653,7 +652,7 @@ async function clickExamScheduleButton(page) {
     if (!(await locator.isVisible().catch(() => false))) continue;
     const previousUrl = page.url();
     await locator.click({ timeout: 8000 }).catch(() => {});
-    await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
     await waitForExamContent(page);
     if (page.url() !== previousUrl || (await page.locator("body").innerText({ timeout: 3000 }).catch(() => "")).includes("응시과목")) {
       return true;
@@ -1002,10 +1001,12 @@ function cleanupTitle(line, rawDate, type) {
 
 function parseStudyProgress(lines, source, url) {
   const events = [];
+  const joined = lines.join(" ");
   const periodLine = lines.find((line) => /형성평가\s*기간|뺤꽦.?됯?.?湲곌컙/.test(line));
   const periodDates = periodLine ? [...periodLine.matchAll(/20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/g)] : [];
   const dashboardPeriodLine = lines.find((line) => /20\d{2}[./-]\d{1,2}[./-]\d{1,2}\.?\s*[-~]\s*20\d{2}[./-]\d{1,2}[./-]\d{1,2}/.test(line));
-  const dashboardPeriodDates = dashboardPeriodLine ? [...dashboardPeriodLine.matchAll(/20\d{2}[./-]\d{1,2}[./-]\d{1,2}/g)] : [];
+  const fallbackPeriodMatch = joined.match(/20\d{2}[./-]\d{1,2}[./-]\d{1,2}\.?\s*[-~]\s*20\d{2}[./-]\d{1,2}[./-]\d{1,2}/);
+  const dashboardPeriodDates = dashboardPeriodLine || fallbackPeriodMatch?.[0] ? [...(dashboardPeriodLine || fallbackPeriodMatch?.[0] || "").matchAll(/20\d{2}[./-]\d{1,2}[./-]\d{1,2}/g)] : [];
   const dueDate = periodDates.at(-1)?.[0]?.replaceAll(".", "-").replaceAll("/", "-") || dashboardPeriodDates.at(-1)?.[0]?.replaceAll(".", "-").replaceAll("/", "-");
   if (!dueDate) return events;
 
@@ -1021,29 +1022,47 @@ function parseStudyProgress(lines, source, url) {
     done: false,
   });
 
-  const dashboardProgress = lines.find((line) => /^\d{1,3}%$/.test(line));
+  const dashboardProgress =
+    lines.find((line) => /^\d{1,3}%$/.test(line)) ||
+    joined.match(/형성평가\s*진도율\s*(\d{1,3}%)/)?.[1] ||
+    joined.match(/진도율\s*(\d{1,3}%)/)?.[1] ||
+    joined.match(/(\d{1,3}%)\s*(?:바로가기|학기 여정|형성평가)/)?.[1];
   const dashboardCourseLine = lines.find((line) => line.includes(",") && line.split(",").filter((part) => isCourseLike(part.trim())).length >= 2);
-  if (dashboardProgress && dashboardCourseLine) {
+  const dashboardCourses = unique([
+    ...(dashboardCourseLine ? dashboardCourseLine.split(",").map((course) => course.trim()) : []),
+    ...lines.flatMap((line) => line.split(",").map((course) => course.trim())),
+  ]).filter(isCourseLike);
+  if (dashboardProgress && dashboardCourses.length) {
     const percent = Number(dashboardProgress.replace("%", ""));
     const completed = percent >= 80;
     return [
       ...events,
-      ...dashboardCourseLine
-        .split(",")
-        .map((course) => course.trim())
-        .filter(isCourseLike)
-        .map((course) => ({
-          id: stableId(`course-progress|${course}|${dueDate}`),
-          type: "course",
-          title: `${course} 형성평가 ${dashboardProgress}`,
-          date: normalizeDate(dueDate),
-          time: "23:59",
-          priority: completed ? "normal" : "high",
-          note: `${source}: 형성평가 진도율 ${dashboardProgress}`,
-          link: url,
-          done: completed,
-        })),
+      ...dashboardCourses.map((course) => ({
+        id: stableId(`course-progress|${course}|${dueDate}`),
+        type: "course",
+        title: `${course} 형성평가 ${dashboardProgress}`,
+        date: normalizeDate(dueDate),
+        time: "23:59",
+        priority: completed ? "normal" : "high",
+        note: `${source}: 형성평가 진도율 ${dashboardProgress}`,
+        link: url,
+        done: completed,
+      })),
     ];
+  }
+  if (dashboardProgress) {
+    const percent = Number(dashboardProgress.replace("%", ""));
+    events.push({
+      id: stableId(`course-progress|formation|${dueDate}|${dashboardProgress}`),
+      type: "course",
+      title: `형성평가 ${dashboardProgress}`,
+      date: normalizeDate(dueDate),
+      time: "23:59",
+      priority: percent >= 80 ? "normal" : "high",
+      note: `${source}: 형성평가 진도율 ${dashboardProgress}`,
+      link: url,
+      done: percent >= 80,
+    });
   }
 
   for (let index = 0; index < lines.length - 2; index += 1) {
