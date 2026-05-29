@@ -36,7 +36,7 @@ export async function collectKnouData(options = {}) {
     throw new Error("KNOU_ID/KNOU_PASSWORD가 없습니다.");
   }
 
-  const browser = await chromium.launch(await getBrowserLaunchOptions(config.headless));
+  const browser = await launchBrowser(config.headless);
   const context = await browser.newContext({
     locale: "ko-KR",
     viewport: { width: 1440, height: 1100 },
@@ -107,6 +107,34 @@ async function getBrowserLaunchOptions(headless) {
     executablePath: await serverlessChromium.executablePath(),
     headless: true,
   };
+}
+
+async function launchBrowser(headless) {
+  const launchOptions = await getBrowserLaunchOptions(headless);
+  let lastError;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      return await chromium.launch(launchOptions);
+    } catch (error) {
+      lastError = error;
+      if (!isTemporaryLaunchError(error) || attempt === 4) break;
+      await wait(700 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+}
+
+function isTemporaryLaunchError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ETXTBSY|Text file busy|spawn .*chromium/i.test(message);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function runCliSync() {
