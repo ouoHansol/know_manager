@@ -46,6 +46,7 @@ export async function collectKnouData(options = {}) {
   const collected = [];
   const errors = [];
   let profile = {};
+  const startedAt = Date.now();
 
   try {
     if (config.scope === "essential") {
@@ -53,8 +54,12 @@ export async function collectKnouData(options = {}) {
       profile = { ...profile, ...mobileProfile };
       await runIsolatedPageStep(context, errors, "시험", async (examPage) => {
         await collectExamApplicationStats(examPage, collected);
-      });
-      await collectNotices(page, "방통대 공지", collected, { includeDetail: false, maxItems: 10 });
+      }, 38000);
+      if (Date.now() - startedAt < 47000) {
+        await collectNotices(page, "방통대 공지", collected, { includeDetail: false, maxItems: 10 });
+      } else {
+        errors.push("공지: 시험 수집을 우선해서 이번 동기화에서는 공지를 건너뛰었습니다.");
+      }
     } else if (config.scope === "all") {
       await openAndMaybeLogin(page, "https://ucampus.knou.ac.kr/ekp/user/login/retrieveULOLogin.do");
       profile = await extractProfile(page);
