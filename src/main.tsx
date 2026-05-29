@@ -344,7 +344,11 @@ function App() {
             >
               <EventList
                 events={visibleEvents}
-                emptyText="표시할 일정이 없습니다. 자동 동기화를 실행하거나 항목을 추가하세요."
+                emptyText={
+                  scheduleEvents.length && completionView === "open"
+                    ? "미완료 일정이 없습니다. 완료 탭에서 동기화된 완료/평가완료 항목을 확인할 수 있습니다."
+                    : "표시할 일정이 없습니다. 자동 동기화를 실행하거나 항목을 추가하세요."
+                }
                 onToggle={toggleDone}
                 onEdit={setEditing}
               />
@@ -952,7 +956,7 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
           mergedPayload.events = [...(mergedPayload.events || []), ...(payload.events || [])];
           mergedPayload.profile = { ...(mergedPayload.profile || {}), ...(payload.profile || {}) };
           mergedPayload.errors = [...(mergedPayload.errors || []), ...(payload.errors || [])];
-          stepResults.push({ label, count: countSyncedItems(payload), ok: true });
+          stepResults.push({ label, count: countScopeItems(payload, scope), ok: true });
         } catch (error) {
           const message = error instanceof Error ? error.message : "실패";
           mergedPayload.errors = [...(mergedPayload.errors || []), `${label}: ${message}`];
@@ -977,7 +981,7 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
       const errorText = mergedPayload.errors?.length ? ` / 일부 오류: ${mergedPayload.errors.join(" | ")}` : "";
       const missingText = getMissingSyncCategoryText(mergedPayload);
       const stepText = stepResults.map((result) => `${result.label} ${result.ok ? result.count : "실패"}`).join(", ");
-      setMessage(`동기화 완료: 일정 ${mergedPayload.events?.length || 0}개, 내 상태 ${countProfileFields(mergedPayload.profile)}개 (${stepText})${missingText}${errorText}`);
+      setMessage(`동기화 완료: 이벤트 ${mergedPayload.events?.length || 0}개, 내 상태 ${countProfileFields(mergedPayload.profile)}개 (${stepText})${missingText}${errorText}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.");
     } finally {
@@ -1215,6 +1219,17 @@ function pruneRedundantExamPlaceholders(events: KnouEvent[]): KnouEvent[] {
 
 function countSyncedItems(payload: SyncedPayload): number {
   return (payload.events || []).length + countProfileFields(payload.profile);
+}
+
+function countScopeItems(payload: SyncedPayload, scope: SyncScope): number {
+  const events = payload.events || [];
+  if (scope === "profile") return countProfileFields(payload.profile);
+  if (scope === "courses") return events.filter((event) => event.type === "course" || event.type === "registration").length;
+  if (scope === "assignments") return events.filter((event) => event.type === "assignment" || event.type === "substitute").length;
+  if (scope === "attendance") return events.filter((event) => event.type === "attendance" || event.type === "substitute").length;
+  if (scope === "exam") return events.filter((event) => event.type === "exam").length;
+  if (scope === "notices") return events.filter((event) => event.type === "notice").length;
+  return events.length;
 }
 
 function countProfileFields(profile?: Profile): number {
