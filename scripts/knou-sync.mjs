@@ -376,6 +376,8 @@ async function collectMobileKnou(page, collected, scope = "mobile") {
       collected.push(...parseMobileGrades(data.text, source, url));
     } else if (url.includes("/agm")) {
       profile = { ...profile, ...extractGraduationProfile(data.text) };
+    } else if (url === "https://m.knou.ac.kr/") {
+      collected.push(...parseMobileCourseList(data.text, source, url));
     } else if (url.includes("/dashboard/course-list")) {
       collected.push(...parseMobileCourseList(data.text, source, url));
     }
@@ -912,7 +914,9 @@ function parseStudyProgress(lines, source, url) {
   const events = [];
   const periodLine = lines.find((line) => /형성평가\s*기간|뺤꽦.?됯?.?湲곌컙/.test(line));
   const periodDates = periodLine ? [...periodLine.matchAll(/20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/g)] : [];
-  const dueDate = periodDates.at(-1)?.[0]?.replaceAll(".", "-").replaceAll("/", "-");
+  const dashboardPeriodLine = lines.find((line) => /20\d{2}[./-]\d{1,2}[./-]\d{1,2}\.?\s*[-~]\s*20\d{2}[./-]\d{1,2}[./-]\d{1,2}/.test(line));
+  const dashboardPeriodDates = dashboardPeriodLine ? [...dashboardPeriodLine.matchAll(/20\d{2}[./-]\d{1,2}[./-]\d{1,2}/g)] : [];
+  const dueDate = periodDates.at(-1)?.[0]?.replaceAll(".", "-").replaceAll("/", "-") || dashboardPeriodDates.at(-1)?.[0]?.replaceAll(".", "-").replaceAll("/", "-");
   if (!dueDate) return events;
 
   events.push({
@@ -922,10 +926,35 @@ function parseStudyProgress(lines, source, url) {
     date: normalizeDate(dueDate),
     time: "23:59",
     priority: "high",
-    note: `${source}: ${periodLine}`,
+    note: `${source}: ${periodLine || `형성평가 기간: ${dashboardPeriodLine}`}`,
     link: url,
     done: false,
   });
+
+  const dashboardProgress = lines.find((line) => /^\d{1,3}%$/.test(line));
+  const dashboardCourseLine = lines.find((line) => line.includes(",") && line.split(",").filter((part) => isCourseLike(part.trim())).length >= 2);
+  if (dashboardProgress && dashboardCourseLine) {
+    const percent = Number(dashboardProgress.replace("%", ""));
+    const completed = percent >= 80;
+    return [
+      ...events,
+      ...dashboardCourseLine
+        .split(",")
+        .map((course) => course.trim())
+        .filter(isCourseLike)
+        .map((course) => ({
+          id: stableId(`course-progress|${course}|${dueDate}`),
+          type: "course",
+          title: `${course} 형성평가 ${dashboardProgress}`,
+          date: normalizeDate(dueDate),
+          time: "23:59",
+          priority: completed ? "normal" : "high",
+          note: `${source}: 형성평가 진도율 ${dashboardProgress}`,
+          link: url,
+          done: completed,
+        })),
+    ];
+  }
 
   for (let index = 0; index < lines.length - 2; index += 1) {
     const course = lines[index];
