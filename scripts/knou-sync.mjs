@@ -68,7 +68,7 @@ export async function collectKnouData(options = {}) {
     } else if (config.scope === "exam") {
       await collectExamApplicationStats(page, collected);
     } else if (config.scope === "notices") {
-      await collectNotices(page, "방통대 공지", collected);
+      await collectNotices(page, "방통대 공지", collected, { includeDetail: false, maxItems: 10 });
     } else {
       const mobileProfile = await collectMobileKnou(page, collected, config.scope);
       profile = { ...profile, ...mobileProfile };
@@ -264,16 +264,18 @@ async function collectFromCurrentPage(page, source, collected) {
   }
 }
 
-async function collectNotices(page, source, collected) {
+async function collectNotices(page, source, collected, options = {}) {
+  const includeDetail = options.includeDetail ?? true;
+  const maxItems = options.maxItems || 20;
   const noticeUrls = [
-    "https://ucampus.knou.ac.kr/ekp/user/notice/initUBDNotice.do",
     "https://www.knou.ac.kr/knou/561/subview.do",
     "https://www.knou.ac.kr/knou/47/subview.do",
+    "https://ucampus.knou.ac.kr/ekp/user/notice/initUBDNotice.do",
   ];
 
   for (const url of noticeUrls) {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => null);
-    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => null);
+    await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
     const notices = await page
       .evaluate(() => {
         const anchors = [...document.querySelectorAll("a")];
@@ -285,14 +287,15 @@ async function collectNotices(page, source, collected) {
           }))
           .filter((item) => item.title.length >= 8)
           .filter((item) => /\/bbs\/|fnView\(/.test(item.href))
-          .slice(0, 120);
+          .slice(0, 50);
       })
       .catch(() => []);
 
     for (const notice of notices) {
       if (!isRequiredNotice(notice.title, notice.context)) continue;
+      if (collected.filter((event) => event.type === "notice").length >= maxItems) return;
       const date = findDate(notice.context) || findDate(notice.title) || { date: todayIso(), raw: "" };
-      const detail = await fetchNoticeDetail(page, notice.href);
+      const detail = includeDetail ? await fetchNoticeDetail(page, notice.href) : "";
       collected.push({
         id: stableId(`notice|${notice.href}|${notice.title}`),
         type: "notice",
@@ -323,7 +326,7 @@ async function collectMobileKnou(page, collected, scope = "mobile") {
     ["https://m.knou.ac.kr/dashboard/course-list", "수강목록"],
   ];
   const scopeMap = {
-    profile: ["/", "/agm", "/arc", "/dashboard/course-list"],
+    profile: ["/", "/agm", "/dashboard/course-list"],
     assignments: ["/assignment/submit", "/assignment/class-attendance"],
     attendance: ["/attendance/schedule-place-inquiry", "/attendance/change-type", "/ale/substitute-application"],
     grades: ["/arc", "/agm", "/asm/academic-record"],
@@ -335,8 +338,8 @@ async function collectMobileKnou(page, collected, scope = "mobile") {
   let profile = {};
 
   for (const [url, source] of targets) {
-    await openAndMaybeLogin(page, url);
-    await page.waitForTimeout(700);
+    const opened = await safeOpenMobilePage(page, url);
+    if (!opened) continue;
     const data = await extractMobilePageData(page);
     profile = { ...profile, ...extractMobileProfile(data.text) };
     if (url.includes("/dashboard/course-list")) {
@@ -368,15 +371,29 @@ async function collectMobileKnou(page, collected, scope = "mobile") {
   return profile;
 }
 
+async function safeOpenMobilePage(page, url) {
+  try {
+    await openAndMaybeLogin(page, url);
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(500);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function extractMobilePageData(page) {
-  return await page.evaluate(() => ({
-    text: document.body?.innerText || "",
-    assignmentCards: [...document.querySelectorAll(".knou_assignment_card")].map((card) => ({
-      text: card.innerText || "",
-      activeStatus: card.querySelector(".knou_stage_progress_status.active")?.innerText?.trim() || "",
-      link: card.querySelector("a")?.href || location.href,
-    })),
-  }));
+  await page.locator("body").waitFor({ timeout: 5000 }).catch(() => {});
+  return await page
+    .evaluate(() => ({
+      text: document.body?.innerText || "",
+      assignmentCards: [...document.querySelectorAll(".knou_assignment_card")].map((card) => ({
+        text: card.innerText || "",
+        activeStatus: card.querySelector(".knou_stage_progress_status.active")?.innerText?.trim() || "",
+        link: card.querySelector("a")?.href || location.href,
+      })),
+    }))
+    .catch(() => ({ text: "", assignmentCards: [] }));
 }
 
 function extractMobileProfile(text) {
