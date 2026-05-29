@@ -344,7 +344,7 @@ async function collectMobileKnou(page, collected, scope = "mobile") {
     attendance: ["/attendance/schedule-place-inquiry", "/attendance/change-type", "/ale/substitute-application"],
     grades: ["/arc", "/agm", "/asm/academic-record"],
     courses: ["/", "/dashboard/course-list"],
-    mobile: allTargets.map(([url]) => new URL(url).pathname),
+    mobile: ["/", "/assignment/submit", "/assignment/class-attendance", "/attendance/schedule-place-inquiry"],
   };
   const allowedPaths = scopeMap[scope] || scopeMap.mobile;
   const targets = allTargets.filter(([url]) => allowedPaths.includes(new URL(url).pathname));

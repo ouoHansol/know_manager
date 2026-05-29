@@ -30,7 +30,7 @@ export default async function handler(request, response) {
         headless: true,
         extraUrls: Array.isArray(body.extraUrls) ? body.extraUrls : [],
       }),
-      50000,
+      57000,
       `${scope} 동기화가 제한시간을 넘었습니다. 잠시 후 다시 시도하세요.`
     );
 
