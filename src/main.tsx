@@ -123,12 +123,17 @@ function App() {
 
   function applySyncedPayload(payload: SyncedPayload) {
     const nextProfile = payload.profile || {};
-    setProfile(nextProfile);
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(nextProfile));
-    setEvents((current) => {
-      const manualEvents = current.filter((event) => !String(event.id).startsWith("knou-"));
-      return [...manualEvents, ...(payload.events || [])];
+    setProfile((current) => {
+      const merged = { ...current, ...nextProfile };
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(merged));
+      return merged;
     });
+    if ((payload.events || []).length) {
+      setEvents((current) => {
+        const manualEvents = current.filter((event) => !String(event.id).startsWith("knou-"));
+        return [...manualEvents, ...(payload.events || [])];
+      });
+    }
   }
 
   const scheduleEvents = useMemo(() => events.filter((event) => event.type !== "notice" && event.type !== "grade"), [events]);
@@ -944,8 +949,10 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
         }
       }
 
-      if (!(mergedPayload.events || []).length && !Object.keys(mergedPayload.profile || {}).length) {
-        throw new Error(mergedPayload.errors?.join(" | ") || "동기화에 실패했습니다.");
+      const syncedCount = countSyncedItems(mergedPayload);
+      if (syncedCount === 0) {
+        const details = mergedPayload.errors?.filter(Boolean).join(" | ");
+        throw new Error(details || "로그인은 시도했지만 표시할 정보를 가져오지 못했습니다. Vercel 함수 로그를 확인하세요.");
       }
 
       if (remember) {
@@ -957,7 +964,7 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
       setCredentials(nextCredentials);
       onSynced(mergedPayload);
       const errorText = mergedPayload.errors?.length ? ` / 일부 오류: ${mergedPayload.errors.join(" | ")}` : "";
-      setMessage(`동기화 완료: ${mergedPayload.events?.length || 0}개 정보를 가져왔습니다.${errorText}`);
+      setMessage(`동기화 완료: ${syncedCount}개 정보를 가져왔습니다.${errorText}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.");
     } finally {
@@ -1169,6 +1176,15 @@ async function requestSyncScope(credentials: SyncCredentials, scope: SyncScope):
   const payload = await readSyncResponse(response);
   if (!response.ok) throw new Error(payload.error || `${scope} 동기화에 실패했습니다.`);
   return payload;
+}
+
+function countSyncedItems(payload: SyncedPayload): number {
+  return (payload.events || []).length + countProfileFields(payload.profile);
+}
+
+function countProfileFields(profile?: Profile): number {
+  if (!profile) return 0;
+  return [profile.name, profile.department, profile.credits, profile.grade].filter(Boolean).length;
 }
 
 function exportData(events: KnouEvent[]) {
