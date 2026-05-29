@@ -137,6 +137,19 @@ function wait(ms) {
   });
 }
 
+async function safePageWait(page, ms) {
+  try {
+    await page.waitForTimeout(ms);
+  } catch (error) {
+    if (!isClosedPageError(error)) throw error;
+  }
+}
+
+function isClosedPageError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Target page, context or browser has been closed|Execution context was destroyed/i.test(message);
+}
+
 async function runCliSync() {
   try {
     const payload = await collectKnouData();
@@ -375,7 +388,7 @@ async function safeOpenMobilePage(page, url) {
   try {
     await openAndMaybeLogin(page, url);
     await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(500);
+    await safePageWait(page, 500);
     return true;
   } catch {
     return false;
@@ -544,12 +557,12 @@ async function collectExamApplicationStats(page, collected) {
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
   await loginApplyIbtIfNeeded(page);
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-  await page.waitForTimeout(1000);
+  await safePageWait(page, 1000);
 
   const scheduleButton = page.getByText("시험일정확인", { exact: true }).first();
   if ((await scheduleButton.count().catch(() => 0)) > 0) {
     await scheduleButton.click({ timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(1200);
+    await safePageWait(page, 1200);
   }
 
   const text = await page.locator("body").innerText({ timeout: 10000 }).catch(() => "");
@@ -728,7 +741,7 @@ async function expandLikelyMenus(page) {
     const link = page.getByText(keyword, { exact: false }).first();
     if ((await link.count().catch(() => 0)) === 0) continue;
     await link.click({ timeout: 2000 }).catch(() => {});
-    await page.waitForTimeout(300);
+    await safePageWait(page, 300);
   }
 }
 
