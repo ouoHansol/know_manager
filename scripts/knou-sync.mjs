@@ -50,11 +50,11 @@ export async function collectKnouData(options = {}) {
 
   try {
     if (config.scope === "essential") {
-      const mobileProfile = await collectMobileKnou(page, collected);
-      profile = { ...profile, ...mobileProfile };
       await runIsolatedPageStep(context, errors, "시험", async (examPage) => {
         await collectExamApplicationStats(examPage, collected);
       }, 38000);
+      const mobileProfile = await collectMobileKnou(page, collected);
+      profile = { ...profile, ...mobileProfile };
       if (Date.now() - startedAt < 47000) {
         await collectNotices(page, "방통대 공지", collected, { includeDetail: false, maxItems: 10 });
       } else {
@@ -627,15 +627,16 @@ function parseMobileCourseList(text, source, url) {
 async function collectExamApplicationStats(page, collected) {
   const url = "https://applyibt.knou.ac.kr/examneApplicationStats/index.do";
   try {
+    await blockHeavyResources(page);
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
     await loginApplyIbtIfNeeded(page);
-    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-    await safePageWait(page, 700);
+    await waitForExamListPage(page);
 
-    await clickExamScheduleButton(page);
-    await safePageWait(page, 1000);
-    await waitForExamContent(page);
+    const restEvents = await collectExamRestEvents(page, url);
+    if (restEvents.length) {
+      collected.push(...restEvents);
+      return;
+    }
 
     const text = await page.locator("body").innerText({ timeout: 10000 }).catch(() => "");
     const events = parseApplyIbtExamSchedule(text, page.url());
@@ -643,6 +644,19 @@ async function collectExamApplicationStats(page, collected) {
   } catch (error) {
     collected.push(createExamFallback(url, error instanceof Error ? error.message : "시험 정보를 가져오지 못했습니다."));
   }
+}
+
+async function blockHeavyResources(page) {
+  await page
+    .route("**/*", (route) => {
+      const type = route.request().resourceType();
+      if (["image", "font", "media", "stylesheet"].includes(type)) {
+        route.abort().catch(() => {});
+        return;
+      }
+      route.continue().catch(() => {});
+    })
+    .catch(() => {});
 }
 
 function createExamFallback(url, reason) {
@@ -658,6 +672,136 @@ function createExamFallback(url, reason) {
     status: "available",
     done: false,
   };
+}
+
+async function waitForExamListPage(page) {
+  await page
+    .waitForFunction(
+      () => /(시험신청현황|시험신청 및 조회|대상 과목|로그아웃)/.test(document.body?.innerText || ""),
+      null,
+      { timeout: 10000 },
+    )
+    .catch(() => {});
+}
+
+async function collectExamRestEvents(page, url) {
+  const payload = await page
+    .evaluate(async () => {
+      const headers = {
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+      };
+      const postJson = async (path, data) => {
+        const response = await fetch(path, {
+          method: "POST",
+          headers,
+          body: new URLSearchParams(data),
+        });
+        const text = await response.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { success: false, raw: text.slice(0, 300) };
+        }
+      };
+
+      const terms = await postJson("/rest/knouCombo/listKnouYearTermID", {});
+      const currentTerm = terms.data?.find((term) => term.currTerm === "Y") || terms.data?.[0];
+      const list = await postJson("/rest/examneApplicationStats/list", {
+        sSrchLecTermId: String(currentTerm?.value || ""),
+        sSrchExamDvCd: "",
+        sSrchHakbun: "",
+      });
+      const rows = Array.isArray(list.data) ? list.data : [];
+      const details = [];
+      for (const row of rows) {
+        if (row.reqYn !== "Y" && row.stReqYn !== "Y") continue;
+        const detail = await postJson("/rest/examneApplicationStats/selectExamApy", {
+          examPlanId: String(row.examPlanId || ""),
+          distId: String(row.distId || ""),
+          sSrchHakbun: "",
+        });
+        details.push({ row, detail });
+      }
+      return { rows, details };
+    })
+    .catch(() => null);
+
+  return parseExamRestPayload(payload, url);
+}
+
+function parseExamRestPayload(payload, url) {
+  if (!payload?.details?.length) return [];
+  const events = [];
+
+  for (const { row, detail } of payload.details) {
+    const items = Array.isArray(detail?.apyLecInfo) ? detail.apyLecInfo.filter((item) => item.reqYn === "Y" || item.allocYn === "Y") : [];
+    if (!items.length) {
+      const endDate = formatCompactDate(row?.reqEndDts || detail?.data?.reqEndDts || "");
+      events.push({
+        id: stableId(`applyibt-rest-need-selection|${row?.examPlanId || ""}|${endDate || todayIso()}`),
+        type: "exam",
+        title: `${row?.examDvNm || detail?.data?.examDvNm || "기말시험"} 일자 선택 필요!`,
+        date: endDate,
+        time: "23:59",
+        priority: "high",
+        note: `*시험일자 선택 필요! 시험신청현황에서 시험일자와 시험장을 선택하세요. (${row?.lecAppCnt || 0}/${row?.lecCnt || 0}과목 신청)`,
+        link: url,
+        status: "available",
+        done: false,
+      });
+      continue;
+    }
+
+    const grouped = new Map();
+    for (const item of items) {
+      const key = [item.examDt, item.stTime, item.endTime, item.examHallNm, item.termId || item.termGrp].join("|");
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(item);
+    }
+
+    for (const group of grouped.values()) {
+      const first = group[0];
+      const date = formatCompactDate(first.examDt);
+      const start = formatCompactTime(first.stTime);
+      const end = formatCompactTime(first.endTime);
+      const subjects = group.map((item) => cleanRestCourseName(item.lecNm)).filter(Boolean);
+      const roundLabel = first.termCd ? `${first.termCd}차시` : first.examTimeNm?.replace(/_.*/, "차시") || `${first.termGrp || grouped.size}차시`;
+      const titlePrefix = row?.examDvNm || detail?.data?.examDvNm || "기말시험";
+      events.push({
+        id: stableId(`applyibt-rest|${row?.examPlanId}|${date}|${start}|${first.examHallNm}|${subjects.join(",")}`),
+        type: "exam",
+        title: `${titlePrefix} ${roundLabel}`,
+        date,
+        time: start,
+        priority: "high",
+        note: `*시험일자 ${date} / ${first.examHallNm || "시험장 확인 필요"} / ${start} ~ ${end}${subjects.length ? ` / 응시과목: ${subjects.join(", ")}` : ""}`,
+        link: url,
+        status: "open",
+        done: false,
+      });
+    }
+  }
+
+  return events;
+}
+
+function formatCompactDate(value) {
+  const text = String(value || "");
+  const match = text.match(/^(20\d{2})(\d{2})(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+}
+
+function formatCompactTime(value) {
+  const text = String(value || "").padStart(6, "0");
+  return /^\d{6}$/.test(text) ? `${text.slice(0, 2)}:${text.slice(2, 4)}` : "";
+}
+
+function cleanRestCourseName(value) {
+  return String(value || "")
+    .split("_")
+    .at(-1)
+    ?.trim();
 }
 
 async function waitForExamContent(page) {
@@ -698,8 +842,8 @@ async function loginApplyIbtIfNeeded(page) {
   if ((await idInput.count().catch(() => 0)) === 0 || (await passwordInput.count().catch(() => 0)) === 0) return;
   const visible = await passwordInput.isVisible().catch(() => false);
   if (!visible) return;
-  await idInput.fill(config.id);
-  await passwordInput.fill(config.password);
+  await idInput.fill(config.id, { timeout: 5000 });
+  await passwordInput.fill(config.password, { timeout: 5000 });
   await Promise.all([
     page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {}),
     passwordInput.press("Enter"),
