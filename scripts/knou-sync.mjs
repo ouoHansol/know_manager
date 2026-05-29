@@ -409,11 +409,32 @@ async function safeOpenMobilePage(page, url) {
   try {
     await openAndMaybeLogin(page, url);
     await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-    await safePageWait(page, 500);
+    await waitForMobileContent(page, url);
+    await safePageWait(page, url === "https://m.knou.ac.kr/" ? 1000 : 500);
     return true;
   } catch {
     return false;
   }
+}
+
+async function waitForMobileContent(page, url) {
+  const pathname = new URL(url).pathname;
+  const source =
+    pathname === "/"
+      ? "(MyKNOU|수강목록|형성평가|진도율)"
+      : pathname.includes("/assignment/")
+        ? "(현재상태|접수번호|과제|평가완료|미제출)"
+        : pathname.includes("/attendance/schedule")
+          ? "(수업 일시|출석수업|장소|강의실)"
+          : "(MyKNOU|수강|출석|과제|성적|학점)";
+
+  await page
+    .waitForFunction(
+      (pattern) => new RegExp(pattern).test(document.body?.innerText || ""),
+      source,
+      { timeout: 10000 },
+    )
+    .catch(() => {});
 }
 
 async function extractMobilePageData(page) {
@@ -580,13 +601,12 @@ async function collectExamApplicationStats(page, collected) {
     await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
     await loginApplyIbtIfNeeded(page);
     await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-    await safePageWait(page, 1000);
+    await safePageWait(page, 1500);
+    await waitForExamContent(page);
 
-    const scheduleButton = page.getByText(/시험\s*일정\s*확인|일정\s*확인/).first();
-    if ((await scheduleButton.count().catch(() => 0)) > 0) {
-      await scheduleButton.click({ timeout: 5000 }).catch(() => {});
-      await safePageWait(page, 1200);
-    }
+    await clickExamScheduleButton(page);
+    await safePageWait(page, 2000);
+    await waitForExamContent(page);
 
     const text = await page.locator("body").innerText({ timeout: 10000 }).catch(() => "");
     const events = parseApplyIbtExamSchedule(text, page.url());
@@ -609,6 +629,38 @@ function createExamFallback(url, reason) {
     status: "available",
     done: false,
   };
+}
+
+async function waitForExamContent(page) {
+  await page
+    .waitForFunction(
+      () => /(시험신청 상세내용|응시과목|시험일자|시험시간|차시|시험장|시험 일정)/.test(document.body?.innerText || ""),
+      null,
+      { timeout: 12000 },
+    )
+    .catch(() => {});
+}
+
+async function clickExamScheduleButton(page) {
+  const candidates = [
+    page.getByText(/시험\s*일정\s*확인|일정\s*확인/).first(),
+    page.locator("button, a").filter({ hasText: /시험.*일정|일정.*확인/ }).first(),
+    page.locator("[onclick], [role='button']").filter({ hasText: /시험.*일정|일정.*확인/ }).first(),
+  ];
+
+  for (const locator of candidates) {
+    if ((await locator.count().catch(() => 0)) === 0) continue;
+    if (!(await locator.isVisible().catch(() => false))) continue;
+    const previousUrl = page.url();
+    await locator.click({ timeout: 8000 }).catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
+    await waitForExamContent(page);
+    if (page.url() !== previousUrl || (await page.locator("body").innerText({ timeout: 3000 }).catch(() => "")).includes("응시과목")) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function loginApplyIbtIfNeeded(page) {
