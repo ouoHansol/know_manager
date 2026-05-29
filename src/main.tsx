@@ -23,6 +23,13 @@ const STORAGE_KEY = "knou-essential-manager-v2";
 const MEMO_STORAGE_KEY = "knou-essential-memos-v1";
 const PROFILE_STORAGE_KEY = "knou-essential-profile-v1";
 const CREDENTIAL_STORAGE_KEY = "knou-essential-credentials-v1";
+const SYNC_SCOPES = [
+  ["profile", "내 상태"],
+  ["assignments", "과제물"],
+  ["attendance", "출석"],
+  ["exam", "시험"],
+  ["notices", "공지"],
+] as const;
 
 type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "exam" | "notice";
 type Priority = "high" | "normal" | "low";
@@ -77,6 +84,8 @@ type SyncCredentials = {
   id: string;
   password: string;
 };
+
+type SyncScope = (typeof SYNC_SCOPES)[number][0];
 
 type SetEvents = React.Dispatch<React.SetStateAction<KnouEvent[]>>;
 
@@ -921,13 +930,23 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
         password: stringifyFormValue(formData.get("password")),
       };
 
-      const response = await fetch("/api/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nextCredentials),
-      });
-      const payload = await readSyncResponse(response);
-      if (!response.ok) throw new Error(payload.error || "동기화에 실패했습니다.");
+      const mergedPayload: SyncedPayload = { events: [], profile: {}, errors: [] };
+
+      for (const [scope, label] of SYNC_SCOPES) {
+        setMessage(`${label} 동기화 중입니다. 단계별로 나눠 가져오는 중입니다.`);
+        try {
+          const payload = await requestSyncScope(nextCredentials, scope);
+          mergedPayload.events = [...(mergedPayload.events || []), ...(payload.events || [])];
+          mergedPayload.profile = { ...(mergedPayload.profile || {}), ...(payload.profile || {}) };
+          mergedPayload.errors = [...(mergedPayload.errors || []), ...(payload.errors || [])];
+        } catch (error) {
+          mergedPayload.errors = [...(mergedPayload.errors || []), `${label}: ${error instanceof Error ? error.message : "실패"}`];
+        }
+      }
+
+      if (!(mergedPayload.events || []).length && !Object.keys(mergedPayload.profile || {}).length) {
+        throw new Error(mergedPayload.errors?.join(" | ") || "동기화에 실패했습니다.");
+      }
 
       if (remember) {
         localStorage.setItem(CREDENTIAL_STORAGE_KEY, JSON.stringify(nextCredentials));
@@ -936,8 +955,9 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
       }
 
       setCredentials(nextCredentials);
-      onSynced(payload);
-      setMessage(`동기화 완료: ${payload.events?.length || 0}개 정보를 가져왔습니다.`);
+      onSynced(mergedPayload);
+      const errorText = mergedPayload.errors?.length ? ` / 일부 오류: ${mergedPayload.errors.join(" | ")}` : "";
+      setMessage(`동기화 완료: ${mergedPayload.events?.length || 0}개 정보를 가져왔습니다.${errorText}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.");
     } finally {
@@ -1138,6 +1158,17 @@ async function readSyncResponse(response: Response): Promise<SyncedPayload & { e
       error: `서버 응답이 JSON이 아닙니다: ${text.slice(0, 180)}`,
     };
   }
+}
+
+async function requestSyncScope(credentials: SyncCredentials, scope: SyncScope): Promise<SyncedPayload> {
+  const response = await fetch("/api/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...credentials, scope }),
+  });
+  const payload = await readSyncResponse(response);
+  if (!response.ok) throw new Error(payload.error || `${scope} 동기화에 실패했습니다.`);
+  return payload;
 }
 
 function exportData(events: KnouEvent[]) {

@@ -29,6 +29,7 @@ export async function collectKnouData(options = {}) {
     ...options,
     extraUrls: Array.isArray(options.extraUrls) ? options.extraUrls : defaultConfig.extraUrls,
     headless: options.headless ?? defaultConfig.headless,
+    scope: options.scope || "all",
   };
 
   if (!config.id || !config.password) {
@@ -47,21 +48,30 @@ export async function collectKnouData(options = {}) {
   let profile = {};
 
   try {
-    await openAndMaybeLogin(page, "https://ucampus.knou.ac.kr/ekp/user/login/retrieveULOLogin.do");
-    profile = await extractProfile(page);
-    await collectFromCurrentPage(page, "U-KNOU", collected);
-    await collectNotices(page, "U-KNOU 공지", collected);
+    if (config.scope === "all") {
+      await openAndMaybeLogin(page, "https://ucampus.knou.ac.kr/ekp/user/login/retrieveULOLogin.do");
+      profile = await extractProfile(page);
+      await collectFromCurrentPage(page, "U-KNOU", collected);
+      await collectNotices(page, "U-KNOU 공지", collected);
 
-    const mobileProfile = await collectMobileKnou(page, collected);
-    profile = { ...profile, ...mobileProfile };
-    await collectExamApplicationStats(page, collected);
+      const mobileProfile = await collectMobileKnou(page, collected);
+      profile = { ...profile, ...mobileProfile };
+      await collectExamApplicationStats(page, collected);
 
-    await openAndMaybeLogin(page, config.startUrl);
-    await collectNotices(page, "방통대 공지", collected);
+      await openAndMaybeLogin(page, config.startUrl);
+      await collectNotices(page, "방통대 공지", collected);
 
-    for (const url of config.extraUrls) {
-      await openAndMaybeLogin(page, url);
-      await collectFromCurrentPage(page, url, collected);
+      for (const url of config.extraUrls) {
+        await openAndMaybeLogin(page, url);
+        await collectFromCurrentPage(page, url, collected);
+      }
+    } else if (config.scope === "exam") {
+      await collectExamApplicationStats(page, collected);
+    } else if (config.scope === "notices") {
+      await collectNotices(page, "방통대 공지", collected);
+    } else {
+      const mobileProfile = await collectMobileKnou(page, collected, config.scope);
+      profile = { ...profile, ...mobileProfile };
     }
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error));
@@ -263,8 +273,8 @@ async function collectNotices(page, source, collected) {
   }
 }
 
-async function collectMobileKnou(page, collected) {
-  const targets = [
+async function collectMobileKnou(page, collected, scope = "mobile") {
+  const allTargets = [
     ["https://m.knou.ac.kr/", "MyKNOU"],
     ["https://m.knou.ac.kr/assignment/submit", "과제 제출"],
     ["https://m.knou.ac.kr/assignment/class-attendance", "출석수업과제 제출"],
@@ -276,6 +286,16 @@ async function collectMobileKnou(page, collected) {
     ["https://m.knou.ac.kr/asm/academic-record", "학적 조회"],
     ["https://m.knou.ac.kr/dashboard/course-list", "수강목록"],
   ];
+  const scopeMap = {
+    profile: ["/", "/agm", "/arc", "/dashboard/course-list"],
+    assignments: ["/assignment/submit", "/assignment/class-attendance"],
+    attendance: ["/attendance/schedule-place-inquiry", "/attendance/change-type", "/ale/substitute-application"],
+    grades: ["/arc", "/agm", "/asm/academic-record"],
+    courses: ["/", "/dashboard/course-list"],
+    mobile: allTargets.map(([url]) => new URL(url).pathname),
+  };
+  const allowedPaths = scopeMap[scope] || scopeMap.mobile;
+  const targets = allTargets.filter(([url]) => allowedPaths.includes(new URL(url).pathname));
   let profile = {};
 
   for (const [url, source] of targets) {
