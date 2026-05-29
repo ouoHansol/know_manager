@@ -1,4 +1,5 @@
 import "dotenv/config";
+import serverlessChromium from "@sparticuz/chromium";
 import { chromium } from "playwright";
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -34,7 +35,7 @@ export async function collectKnouData(options = {}) {
     throw new Error("KNOU_ID/KNOU_PASSWORD가 없습니다.");
   }
 
-  const browser = await chromium.launch({ headless: config.headless });
+  const browser = await chromium.launch(await getBrowserLaunchOptions(config.headless));
   const context = await browser.newContext({
     locale: "ko-KR",
     viewport: { width: 1440, height: 1100 },
@@ -75,6 +76,18 @@ export async function collectKnouData(options = {}) {
     errors,
     events,
     profile,
+  };
+}
+
+async function getBrowserLaunchOptions(headless) {
+  if (!process.env.VERCEL && !process.env.AWS_REGION) {
+    return { headless };
+  }
+
+  return {
+    args: serverlessChromium.args,
+    executablePath: await serverlessChromium.executablePath(),
+    headless: true,
   };
 }
 
