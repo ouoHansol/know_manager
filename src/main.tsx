@@ -130,8 +130,7 @@ function App() {
     });
     if ((payload.events || []).length) {
       setEvents((current) => {
-        const manualEvents = current.filter((event) => !String(event.id).startsWith("knou-"));
-        return [...manualEvents, ...(payload.events || [])];
+        return mergeSyncedEvents(current, payload.events || []);
       });
     }
   }
@@ -964,7 +963,8 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
       setCredentials(nextCredentials);
       onSynced(mergedPayload);
       const errorText = mergedPayload.errors?.length ? ` / 일부 오류: ${mergedPayload.errors.join(" | ")}` : "";
-      setMessage(`동기화 완료: ${syncedCount}개 정보를 가져왔습니다.${errorText}`);
+      const missingText = getMissingSyncCategoryText(mergedPayload);
+      setMessage(`동기화 완료: ${syncedCount}개 정보를 가져왔습니다.${missingText}${errorText}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.");
     } finally {
@@ -1178,6 +1178,28 @@ async function requestSyncScope(credentials: SyncCredentials, scope: SyncScope):
   return payload;
 }
 
+function mergeSyncedEvents(current: KnouEvent[], incoming: KnouEvent[]): KnouEvent[] {
+  const merged = new Map(current.map((event) => [event.id, event]));
+  for (const event of incoming) {
+    merged.set(event.id, event);
+  }
+  return pruneRedundantExamPlaceholders([...merged.values()]);
+}
+
+function pruneRedundantExamPlaceholders(events: KnouEvent[]): KnouEvent[] {
+  const hasDetailedExam = events.some((event) => {
+    if (event.type !== "exam") return false;
+    const details = parseExamDetails(event);
+    return Boolean(details?.subjects.length || (details?.place && details.place !== "확인 필요"));
+  });
+  if (!hasDetailedExam) return events;
+  return events.filter((event) => {
+    if (event.type !== "exam") return true;
+    const text = `${event.title} ${event.note || ""}`;
+    return !/(일자\s*선택\s*필요|일자\s*확인\s*필요|일자 미정)/.test(text);
+  });
+}
+
 function countSyncedItems(payload: SyncedPayload): number {
   return (payload.events || []).length + countProfileFields(payload.profile);
 }
@@ -1185,6 +1207,18 @@ function countSyncedItems(payload: SyncedPayload): number {
 function countProfileFields(profile?: Profile): number {
   if (!profile) return 0;
   return [profile.name, profile.department, profile.credits, profile.grade].filter(Boolean).length;
+}
+
+function getMissingSyncCategoryText(payload: SyncedPayload): string {
+  const events = payload.events || [];
+  const missing = [
+    countProfileFields(payload.profile) ? "" : "내 상태",
+    events.some((event) => event.type === "assignment" || event.type === "substitute") ? "" : "과제물",
+    events.some((event) => event.type === "attendance" || event.type === "substitute") ? "" : "출석",
+    events.some((event) => event.type === "exam") ? "" : "시험",
+    events.some((event) => event.type === "notice") ? "" : "공지",
+  ].filter(Boolean);
+  return missing.length ? ` / 부족한 항목: ${missing.join(", ")}` : "";
 }
 
 function exportData(events: KnouEvent[]) {
