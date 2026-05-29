@@ -31,6 +31,7 @@ export default async function handler(request, response) {
     response.setHeader("Cache-Control", "no-store");
     response.status(200).json(payload);
   } catch (error) {
+    console.error("KNOU sync failed", error);
     response.status(500).json({
       error: error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.",
     });

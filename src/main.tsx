@@ -926,7 +926,7 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nextCredentials),
       });
-      const payload = await response.json();
+      const payload = await readSyncResponse(response);
       if (!response.ok) throw new Error(payload.error || "동기화에 실패했습니다.");
 
       if (remember) {
@@ -1122,6 +1122,21 @@ async function loadSyncedPayload(): Promise<SyncedPayload | null> {
     return Array.isArray(payload.events) ? payload : null;
   } catch {
     return null;
+  }
+}
+
+async function readSyncResponse(response: Response): Promise<SyncedPayload & { error?: string }> {
+  const text = await response.text();
+  if (!text) return { events: [] };
+
+  try {
+    const payload = JSON.parse(text);
+    return payload && typeof payload === "object" ? payload : { events: [], error: "동기화 응답 형식이 올바르지 않습니다." };
+  } catch {
+    return {
+      events: [],
+      error: `서버 응답이 JSON이 아닙니다: ${text.slice(0, 180)}`,
+    };
   }
 }
 
