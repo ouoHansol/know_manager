@@ -23,8 +23,11 @@ const STORAGE_KEY = "knou-essential-manager-v2";
 const MEMO_STORAGE_KEY = "knou-essential-memos-v1";
 const PROFILE_STORAGE_KEY = "knou-essential-profile-v1";
 const CREDENTIAL_STORAGE_KEY = "knou-essential-credentials-v1";
+const APP_VERSION = "2026-06-02.rest-exam";
 const SYNC_SCOPES = [
-  ["essential", "전체"],
+  ["exam", "시험"],
+  ["mobile", "학습정보"],
+  ["notices", "공지"],
 ] as const;
 
 type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "exam" | "notice";
@@ -74,6 +77,12 @@ type SyncedPayload = {
   profile?: Profile;
   errors?: string[];
   syncedAt?: string;
+  version?: string;
+  diagnostics?: {
+    scope?: string;
+    durationMs?: number;
+    eventTypes?: Record<string, number>;
+  };
 };
 
 type SyncCredentials = {
@@ -274,6 +283,7 @@ function App() {
         <div>
           <p className="eyebrow">KNOU essentials</p>
           <h1>방통대 필수 매니저</h1>
+          <span className="app-version">sync {APP_VERSION}</span>
         </div>
         <div className="topbar-actions">
           <button className="secondary-button" onClick={() => setAddOpen(true)}>
@@ -951,7 +961,11 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
           mergedPayload.events = [...(mergedPayload.events || []), ...(payload.events || [])];
           mergedPayload.profile = { ...(mergedPayload.profile || {}), ...(payload.profile || {}) };
           mergedPayload.errors = [...(mergedPayload.errors || []), ...(payload.errors || [])];
+          mergedPayload.version = payload.version || mergedPayload.version;
           stepResults.push({ label, count: countScopeItems(payload, scope), ok: true });
+          if ((payload.events || []).length || countProfileFields(payload.profile)) {
+            onSynced(payload);
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : "실패";
           mergedPayload.errors = [...(mergedPayload.errors || []), `${label}: ${message}`];
@@ -976,7 +990,8 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
       const errorText = mergedPayload.errors?.length ? ` / 일부 오류: ${mergedPayload.errors.join(" | ")}` : "";
       const missingText = getMissingSyncCategoryText(mergedPayload);
       const stepText = stepResults.map((result) => `${result.label} ${result.ok ? result.count : "실패"}`).join(", ");
-      setMessage(`동기화 완료: 이벤트 ${mergedPayload.events?.length || 0}개, 내 상태 ${countProfileFields(mergedPayload.profile)}개 (${stepText})${missingText}${errorText}`);
+      const versionText = mergedPayload.version ? ` / API ${mergedPayload.version}` : "";
+      setMessage(`동기화 완료: 이벤트 ${mergedPayload.events?.length || 0}개, 내 상태 ${countProfileFields(mergedPayload.profile)}개 (${stepText})${missingText}${errorText}${versionText}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.");
     } finally {
@@ -1227,7 +1242,9 @@ function countSyncedItems(payload: SyncedPayload): number {
 
 function countScopeItems(payload: SyncedPayload, scope: SyncScope): number {
   const events = payload.events || [];
-  if (scope === "essential") return events.length + countProfileFields(payload.profile);
+  if (scope === "exam") return events.filter((event) => event.type === "exam").length;
+  if (scope === "mobile") return events.length + countProfileFields(payload.profile);
+  if (scope === "notices") return events.filter((event) => event.type === "notice").length;
   return events.length;
 }
 

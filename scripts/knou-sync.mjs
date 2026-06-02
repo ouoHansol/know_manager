@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outputPath = join(root, "public", "data", "knou-events.json");
+const SYNC_VERSION = "2026-06-02.rest-exam";
 
 const defaultConfig = {
   id: process.env.KNOU_ID,
@@ -96,10 +97,23 @@ export async function collectKnouData(options = {}) {
   return {
     syncedAt: new Date().toISOString(),
     source: "knou-playwright",
+    version: SYNC_VERSION,
+    diagnostics: {
+      scope: config.scope,
+      durationMs: Date.now() - startedAt,
+      eventTypes: countEventTypes(events),
+    },
     errors,
     events,
     profile,
   };
+}
+
+function countEventTypes(events) {
+  return events.reduce((acc, event) => {
+    acc[event.type] = (acc[event.type] || 0) + 1;
+    return acc;
+  }, {});
 }
 
 async function runIsolatedPageStep(context, errors, label, task, timeoutMs = 22000) {
