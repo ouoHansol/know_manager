@@ -23,12 +23,13 @@ const STORAGE_KEY = "knou-essential-manager-v2";
 const MEMO_STORAGE_KEY = "knou-essential-memos-v1";
 const PROFILE_STORAGE_KEY = "knou-essential-profile-v1";
 const CREDENTIAL_STORAGE_KEY = "knou-essential-credentials-v1";
-const APP_VERSION = "2026-06-02.rest-exam";
+const APP_VERSION = "2026-06-02.scope-sync";
 const SYNC_SCOPES = [
   ["exam", "시험"],
   ["mobile", "학습정보"],
   ["notices", "공지"],
 ] as const;
+const SYNC_META_STORAGE_KEY = "knou-essential-sync-meta-v1";
 
 type EventType = "assignment" | "attendance" | "registration" | "course" | "substitute" | "grade" | "exam" | "notice";
 type Priority = "high" | "normal" | "low";
@@ -91,6 +92,15 @@ type SyncCredentials = {
 };
 
 type SyncScope = (typeof SYNC_SCOPES)[number][0];
+type SyncStatus = "idle" | "running" | "done" | "error";
+
+type SyncMetaItem = {
+  status: SyncStatus;
+  syncedAt?: string;
+  message?: string;
+};
+
+type SyncMeta = Partial<Record<SyncScope, SyncMetaItem>>;
 
 type SyncStepResult = {
   label: string;
@@ -115,6 +125,7 @@ const typeLabels: Record<EventType, string> = {
 function App() {
   const [events, setEvents] = useStoredEvents();
   const [memos, setMemos] = useStoredMemos();
+  const [syncMeta, setSyncMeta] = useState<SyncMeta>(() => loadStoredSyncMeta());
   const [categoryView, setCategoryView] = useState<CategoryView>("all");
   const [profile, setProfile] = useState<Profile>(() => loadStoredProfile());
   const [completionView, setCompletionView] = useState<CompletionView>("open");
@@ -145,6 +156,14 @@ function App() {
         return mergeSyncedEvents(current, payload.events || []);
       });
     }
+  }
+
+  function updateSyncMeta(scope: SyncScope, item: SyncMetaItem) {
+    setSyncMeta((current) => {
+      const next = { ...current, [scope]: item };
+      localStorage.setItem(SYNC_META_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
   }
 
   const scheduleEvents = useMemo(() => events.filter((event) => event.type !== "notice" && event.type !== "grade"), [events]);
@@ -303,14 +322,14 @@ function App() {
 
       <main className="layout">
         <section className="priority-board" aria-label="주요 정보">
-          <ExamFocus events={topExamEvents} />
+          <ExamFocus events={topExamEvents} sync={syncMeta.exam} />
           <MemoPanel memos={memos} onAdd={() => setMemoOpen(true)} onEdit={setEditingMemo} onDelete={deleteMemo} />
         </section>
 
         <section className="main-grid">
           <aside className="left-sidebar">
-            <ProfilePanel profile={profile} gradeEvents={gradeEvents} onOpenGrades={() => setGradeOpen(true)} onSynced={applySyncedPayload} />
-            <NoticePanel notices={notices} onSelect={setSelectedNotice} />
+            <ProfilePanel profile={profile} gradeEvents={gradeEvents} sync={syncMeta.mobile} onOpenGrades={() => setGradeOpen(true)} onSynced={applySyncedPayload} onSyncMetaChange={updateSyncMeta} />
+            <NoticePanel notices={notices} sync={syncMeta.notices} onSelect={setSelectedNotice} />
           </aside>
           <div className="work-area">
             <Panel
@@ -347,6 +366,7 @@ function App() {
                 </div>
               }
             >
+              <SyncStateLine label="학습정보" sync={syncMeta.mobile} />
               <EventList
                 events={visibleEvents}
                 emptyText={
@@ -365,7 +385,7 @@ function App() {
       <AddDialog open={addOpen} onClose={() => setAddOpen(false)} onSubmit={addEvent} />
       <MemoDialog open={memoOpen} onClose={() => setMemoOpen(false)} onSubmit={addMemo} />
       <MemoDialog memo={editingMemo} open={Boolean(editingMemo)} onClose={() => setEditingMemo(null)} onSubmit={saveMemo} onDelete={deleteMemo} />
-      <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} onSynced={applySyncedPayload} />
+      <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} onSynced={applySyncedPayload} onSyncMetaChange={updateSyncMeta} syncMeta={syncMeta} />
       <EditDialog event={editing} onClose={() => setEditing(null)} onSubmit={saveEdit} onDelete={deleteEvent} />
       <NoticeDialog notice={selectedNotice} onClose={() => setSelectedNotice(null)} />
       <GradeDialog open={gradeOpen} profile={profile} gradeEvents={gradeEvents} onClose={() => setGradeOpen(false)} />
@@ -454,6 +474,17 @@ function loadStoredCredentials(): SyncCredentials {
   }
 }
 
+function loadStoredSyncMeta(): SyncMeta {
+  const saved = localStorage.getItem(SYNC_META_STORAGE_KEY);
+  if (!saved) return {};
+  try {
+    const parsed = JSON.parse(saved);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function Panel({
   eyebrow,
   title,
@@ -479,6 +510,26 @@ function Panel({
   );
 }
 
+function SyncStateLine({ label, sync, compact = false }: { label: string; sync?: SyncMetaItem; compact?: boolean }) {
+  const status = sync?.status || "idle";
+  const text =
+    status === "running"
+      ? `${label} 동기화 중`
+      : status === "done"
+        ? `${label} 동기화 완료`
+        : status === "error"
+          ? `${label} 동기화 오류`
+          : `${label} 동기화 전`;
+  return (
+    <div className={`sync-state-line ${status} ${compact ? "compact" : ""}`}>
+      <span className="sync-dot" aria-hidden="true" />
+      <strong>{text}</strong>
+      {sync?.syncedAt ? <span>{formatSyncTime(sync.syncedAt)}</span> : null}
+      {sync?.message ? <em>{sync.message}</em> : null}
+    </div>
+  );
+}
+
 function EventList({
   events,
   emptyText,
@@ -501,7 +552,7 @@ function EventList({
   );
 }
 
-function NoticePanel({ notices, onSelect }: { notices: KnouEvent[]; onSelect: (notice: KnouEvent) => void }) {
+function NoticePanel({ notices, sync, onSelect }: { notices: KnouEvent[]; sync?: SyncMetaItem; onSelect: (notice: KnouEvent) => void }) {
   const [page, setPage] = useState(0);
   const latestNotices = notices.slice(0, 10);
   const pageCount = Math.ceil(latestNotices.length / 5);
@@ -519,6 +570,7 @@ function NoticePanel({ notices, onSelect }: { notices: KnouEvent[]; onSelect: (n
           <h2>읽을 공지</h2>
         </div>
       </div>
+      <SyncStateLine label="공지" sync={sync} compact />
       {!notices.length ? (
         <div className="empty notice-empty">표시할 공지가 없습니다.</div>
       ) : (
@@ -549,13 +601,17 @@ function NoticePanel({ notices, onSelect }: { notices: KnouEvent[]; onSelect: (n
 function ProfilePanel({
   profile,
   gradeEvents,
+  sync,
   onOpenGrades,
   onSynced,
+  onSyncMetaChange,
 }: {
   profile: Profile;
   gradeEvents: KnouEvent[];
+  sync?: SyncMetaItem;
   onOpenGrades: () => void;
   onSynced: (payload: SyncedPayload) => void;
+  onSyncMetaChange: (scope: SyncScope, item: SyncMetaItem) => void;
 }) {
   const hasProfile = Boolean(profile.name || profile.department || profile.credits);
 
@@ -567,10 +623,11 @@ function ProfilePanel({
           <h2>내 상태</h2>
         </div>
       </div>
+      <SyncStateLine label="학습정보" sync={sync} compact />
       {!hasProfile ? (
         <div className="profile-login">
           <p className="hint">로그인하면 이름, 학과, 수강목록, 학점 정보를 이 영역에 표시합니다.</p>
-          <SyncForm onSynced={onSynced} />
+          <SyncForm onSynced={onSynced} onSyncMetaChange={onSyncMetaChange} defaultScopes={["mobile"]} />
         </div>
       ) : (
         <>
@@ -610,7 +667,7 @@ function ProfilePanel({
   );
 }
 
-function ExamFocus({ events }: { events: KnouEvent[] }) {
+function ExamFocus({ events, sync }: { events: KnouEvent[]; sync?: SyncMetaItem }) {
   return (
     <section className="panel focus-panel exam-focus">
       <div className="panel-heading">
@@ -619,6 +676,7 @@ function ExamFocus({ events }: { events: KnouEvent[] }) {
           <h2>시험 일정</h2>
         </div>
       </div>
+      <SyncStateLine label="시험" sync={sync} compact />
       {!events.length ? (
         <p className="empty compact-empty">시험 일정이 없습니다. 동기화를 실행하세요.</p>
       ) : (
@@ -902,7 +960,19 @@ function EventForm({
   );
 }
 
-function SyncDialog({ open, onClose, onSynced }: { open: boolean; onClose: () => void; onSynced: (payload: SyncedPayload) => void }) {
+function SyncDialog({
+  open,
+  onClose,
+  onSynced,
+  onSyncMetaChange,
+  syncMeta,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSynced: (payload: SyncedPayload) => void;
+  onSyncMetaChange: (scope: SyncScope, item: SyncMetaItem) => void;
+  syncMeta: SyncMeta;
+}) {
   function handleSynced(payload: SyncedPayload) {
     onSynced(payload);
   }
@@ -919,7 +989,7 @@ function SyncDialog({ open, onClose, onSynced }: { open: boolean; onClose: () =>
         <p className="hint">
           아이디와 비밀번호는 이 브라우저에만 저장됩니다. 동기화 요청 때만 Vercel API로 전달되고 저장소나 서버 환경변수에는 저장하지 않습니다.
         </p>
-        <SyncForm onSynced={handleSynced} />
+        <SyncForm onSynced={handleSynced} onSyncMetaChange={onSyncMetaChange} syncMeta={syncMeta} />
         <div className="links-panel">
           <a href="https://www.knou.ac.kr" target="_blank" rel="noreferrer">
             <ExternalLink /> 방통대 대표 홈페이지
@@ -933,7 +1003,17 @@ function SyncDialog({ open, onClose, onSynced }: { open: boolean; onClose: () =>
   );
 }
 
-function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) {
+function SyncForm({
+  onSynced,
+  onSyncMetaChange,
+  syncMeta = {},
+  defaultScopes = SYNC_SCOPES.map(([scope]) => scope),
+}: {
+  onSynced: (payload: SyncedPayload) => void;
+  onSyncMetaChange: (scope: SyncScope, item: SyncMetaItem) => void;
+  syncMeta?: SyncMeta;
+  defaultScopes?: SyncScope[];
+}) {
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState("");
   const [remember, setRemember] = useState(true);
@@ -941,35 +1021,55 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
 
   async function syncNow(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await syncScopes(defaultScopes);
+  }
+
+  async function syncScopes(scopes: SyncScope[]) {
+    const nextCredentials = {
+      id: credentials.id.trim(),
+      password: credentials.password,
+    };
+    if (!nextCredentials.id || !nextCredentials.password) {
+      setMessage("아이디와 비밀번호를 입력하세요.");
+      return;
+    }
+
     setRunning(true);
     setMessage("동기화 중입니다. 방통대 로그인과 페이지 조회가 끝날 때까지 잠시 기다려 주세요.");
 
     try {
-      const formData = new FormData(event.currentTarget);
-      const nextCredentials = {
-        id: stringifyFormValue(formData.get("id")).trim(),
-        password: stringifyFormValue(formData.get("password")),
-      };
-
       const mergedPayload: SyncedPayload = { events: [], profile: {}, errors: [] };
       const stepResults: SyncStepResult[] = [];
 
-      for (const [scope, label] of SYNC_SCOPES) {
+      for (const scope of scopes) {
+        const label = getSyncScopeLabel(scope);
         setMessage(`${label} 동기화 중입니다. 단계별로 나눠 가져오는 중입니다.`);
+        onSyncMetaChange(scope, { status: "running", message: "동기화 중" });
         try {
           const payload = await requestSyncScope(nextCredentials, scope);
           mergedPayload.events = [...(mergedPayload.events || []), ...(payload.events || [])];
           mergedPayload.profile = { ...(mergedPayload.profile || {}), ...(payload.profile || {}) };
           mergedPayload.errors = [...(mergedPayload.errors || []), ...(payload.errors || [])];
           mergedPayload.version = payload.version || mergedPayload.version;
-          stepResults.push({ label, count: countScopeItems(payload, scope), ok: true });
+          const count = countScopeItems(payload, scope);
+          stepResults.push({ label, count, ok: true });
+          onSyncMetaChange(scope, {
+            status: "done",
+            syncedAt: payload.syncedAt || new Date().toISOString(),
+            message: `${count}개`,
+          });
           if ((payload.events || []).length || countProfileFields(payload.profile)) {
             onSynced(payload);
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : "실패";
-          mergedPayload.errors = [...(mergedPayload.errors || []), `${label}: ${message}`];
-          stepResults.push({ label, count: 0, ok: false, error: message });
+          const errorMessage = error instanceof Error ? error.message : "실패";
+          mergedPayload.errors = [...(mergedPayload.errors || []), `${label}: ${errorMessage}`];
+          stepResults.push({ label, count: 0, ok: false, error: errorMessage });
+          onSyncMetaChange(scope, {
+            status: "error",
+            syncedAt: new Date().toISOString(),
+            message: errorMessage.slice(0, 80),
+          });
         }
       }
 
@@ -1024,6 +1124,14 @@ function SyncForm({ onSynced }: { onSynced: (payload: SyncedPayload) => void }) 
           <RefreshCw /> {running ? "동기화 중" : "지금 동기화"}
         </button>
       </form>
+      <div className="scope-sync-grid" aria-label="영역별 동기화">
+        {SYNC_SCOPES.map(([scope, label]) => (
+          <button key={scope} className="secondary-button" type="button" disabled={running} onClick={() => syncScopes([scope])}>
+            <RefreshCw /> {label}
+            <small>{scopeStatusText(syncMeta[scope])}</small>
+          </button>
+        ))}
+      </div>
       {message ? <p className="sync-message">{message}</p> : null}
     </>
   );
@@ -1248,6 +1356,19 @@ function countScopeItems(payload: SyncedPayload, scope: SyncScope): number {
   return events.length;
 }
 
+function getSyncScopeLabel(scope: SyncScope): string {
+  return SYNC_SCOPES.find(([value]) => value === scope)?.[1] || scope;
+}
+
+function scopeStatusText(sync?: SyncMetaItem): string {
+  if (!sync) return "동기화 전";
+  if (sync.status === "running") return "진행 중";
+  if (sync.status === "error") return "오류";
+  if (sync.status === "done" && sync.syncedAt) return formatSyncTime(sync.syncedAt);
+  if (sync.status === "done") return "완료";
+  return "동기화 전";
+}
+
 function countProfileFields(profile?: Profile): number {
   if (!profile) return 0;
   return [profile.name, profile.department, profile.credits, profile.grade].filter(Boolean).length;
@@ -1353,6 +1474,17 @@ function formatShortDate(date: string) {
     month: "numeric",
     day: "numeric",
   }).format(new Date(`${date}T00:00:00`));
+}
+
+function formatSyncTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function getNoticeSummaryItems(notice: KnouEvent): NoticeSummaryItem[] {

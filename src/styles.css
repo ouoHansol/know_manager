@@ -59,6 +59,14 @@ button {
   font-size: clamp(24px, 3vw, 34px);
 }
 
+.app-version {
+  display: inline-block;
+  margin-top: 6px;
+  color: #c7d4dc;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .eyebrow {
   margin: 0 0 5px;
   color: #80909b;
@@ -704,6 +712,85 @@ textarea {
   line-height: 1.45;
   margin: 0;
   padding: 10px 12px;
+}
+
+.scope-sync-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scope-sync-grid button {
+  min-height: 50px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.scope-sync-grid small {
+  width: 100%;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sync-state-line {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfc;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  flex-wrap: wrap;
+}
+
+.sync-state-line.compact {
+  min-height: 30px;
+  padding: 6px 8px;
+}
+
+.sync-state-line strong {
+  color: var(--ink);
+}
+
+.sync-state-line em {
+  color: var(--muted);
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a6b3bc;
+}
+
+.sync-state-line.running .sync-dot {
+  background: var(--blue);
+  animation: pulse 0.9s ease-in-out infinite alternate;
+}
+
+.sync-state-line.done .sync-dot {
+  background: var(--green);
+}
+
+.sync-state-line.error .sync-dot {
+  background: var(--red);
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .links-panel {

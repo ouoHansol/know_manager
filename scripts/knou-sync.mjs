@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outputPath = join(root, "public", "data", "knou-events.json");
-const SYNC_VERSION = "2026-06-02.rest-exam";
+const SYNC_VERSION = "2026-06-02.scope-sync";
 
 const defaultConfig = {
   id: process.env.KNOU_ID,
