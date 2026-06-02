@@ -764,6 +764,31 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.mini-sync-button {
+  min-height: 24px;
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--blue);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mini-sync-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mini-sync-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .sync-dot {
   width: 8px;
   height: 8px;

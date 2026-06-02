@@ -27,6 +27,7 @@ const APP_VERSION = "2026-06-02.scope-sync";
 const SYNC_SCOPES = [
   ["exam", "시험"],
   ["mobile", "학습정보"],
+  ["grades", "학점/성적"],
   ["notices", "공지"],
 ] as const;
 const SYNC_META_STORAGE_KEY = "knou-essential-sync-meta-v1";
@@ -171,6 +172,7 @@ function App() {
   const openEvents = scheduleEvents.filter((event) => !event.done);
   const gradeEvents = events.filter((event) => event.type === "grade").sort(sortByDate);
   const topExamEvents = useMemo(() => scheduleEvents.filter((event) => event.type === "exam" && !event.done).sort(sortByUrgency).slice(0, 3), [scheduleEvents]);
+  const displaySyncMeta = useMemo(() => inferSyncMeta(syncMeta, events, profile), [syncMeta, events, profile]);
 
   const visibleEvents = useMemo(() => {
     return scheduleEvents
@@ -296,6 +298,30 @@ function App() {
     }
   }
 
+  async function quickSync(scope: SyncScope) {
+    const credentials = loadStoredCredentials();
+    if (!credentials.id || !credentials.password) {
+      setSyncOpen(true);
+      return;
+    }
+    updateSyncMeta(scope, { status: "running", message: "동기화 중" });
+    try {
+      const payload = await requestSyncScope(credentials, scope);
+      applySyncedPayload(payload);
+      updateSyncMeta(scope, {
+        status: "done",
+        syncedAt: payload.syncedAt || new Date().toISOString(),
+        message: `${countScopeItems(payload, scope)}개`,
+      });
+    } catch (error) {
+      updateSyncMeta(scope, {
+        status: "error",
+        syncedAt: new Date().toISOString(),
+        message: (error instanceof Error ? error.message : "실패").slice(0, 80),
+      });
+    }
+  }
+
   return (
     <>
       <header className="topbar">
@@ -322,14 +348,23 @@ function App() {
 
       <main className="layout">
         <section className="priority-board" aria-label="주요 정보">
-          <ExamFocus events={topExamEvents} sync={syncMeta.exam} />
+          <ExamFocus events={topExamEvents} sync={displaySyncMeta.exam} onSync={() => quickSync("exam")} />
           <MemoPanel memos={memos} onAdd={() => setMemoOpen(true)} onEdit={setEditingMemo} onDelete={deleteMemo} />
         </section>
 
         <section className="main-grid">
           <aside className="left-sidebar">
-            <ProfilePanel profile={profile} gradeEvents={gradeEvents} sync={syncMeta.mobile} onOpenGrades={() => setGradeOpen(true)} onSynced={applySyncedPayload} onSyncMetaChange={updateSyncMeta} />
-            <NoticePanel notices={notices} sync={syncMeta.notices} onSelect={setSelectedNotice} />
+            <ProfilePanel
+              profile={profile}
+              gradeEvents={gradeEvents}
+              sync={displaySyncMeta.mobile}
+              gradeSync={displaySyncMeta.grades}
+              onOpenGrades={() => setGradeOpen(true)}
+              onSynced={applySyncedPayload}
+              onSyncMetaChange={updateSyncMeta}
+              onQuickSync={quickSync}
+            />
+            <NoticePanel notices={notices} sync={displaySyncMeta.notices} onSync={() => quickSync("notices")} onSelect={setSelectedNotice} />
           </aside>
           <div className="work-area">
             <Panel
@@ -366,7 +401,7 @@ function App() {
                 </div>
               }
             >
-              <SyncStateLine label="학습정보" sync={syncMeta.mobile} />
+              <SyncStateLine label="학습정보" sync={displaySyncMeta.mobile} onSync={() => quickSync("mobile")} />
               <EventList
                 events={visibleEvents}
                 emptyText={
@@ -385,7 +420,7 @@ function App() {
       <AddDialog open={addOpen} onClose={() => setAddOpen(false)} onSubmit={addEvent} />
       <MemoDialog open={memoOpen} onClose={() => setMemoOpen(false)} onSubmit={addMemo} />
       <MemoDialog memo={editingMemo} open={Boolean(editingMemo)} onClose={() => setEditingMemo(null)} onSubmit={saveMemo} onDelete={deleteMemo} />
-      <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} onSynced={applySyncedPayload} onSyncMetaChange={updateSyncMeta} syncMeta={syncMeta} />
+      <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} onSynced={applySyncedPayload} onSyncMetaChange={updateSyncMeta} syncMeta={displaySyncMeta} />
       <EditDialog event={editing} onClose={() => setEditing(null)} onSubmit={saveEdit} onDelete={deleteEvent} />
       <NoticeDialog notice={selectedNotice} onClose={() => setSelectedNotice(null)} />
       <GradeDialog open={gradeOpen} profile={profile} gradeEvents={gradeEvents} onClose={() => setGradeOpen(false)} />
@@ -485,6 +520,25 @@ function loadStoredSyncMeta(): SyncMeta {
   }
 }
 
+function inferSyncMeta(meta: SyncMeta, events: KnouEvent[], profile: Profile): SyncMeta {
+  return {
+    ...meta,
+    exam: meta.exam || inferDoneMeta(events.some((event) => event.type === "exam")),
+    mobile:
+      meta.mobile ||
+      inferDoneMeta(
+        events.some((event) => ["course", "assignment", "attendance", "substitute"].includes(event.type)) ||
+          Boolean(profile.name || profile.department || profile.courseListUrl),
+      ),
+    grades: meta.grades || inferDoneMeta(events.some((event) => event.type === "grade") || Boolean(profile.credits || profile.grade)),
+    notices: meta.notices || inferDoneMeta(events.some((event) => event.type === "notice")),
+  };
+}
+
+function inferDoneMeta(hasData: boolean): SyncMetaItem | undefined {
+  return hasData ? { status: "done", message: "기존 데이터" } : undefined;
+}
+
 function Panel({
   eyebrow,
   title,
@@ -510,7 +564,7 @@ function Panel({
   );
 }
 
-function SyncStateLine({ label, sync, compact = false }: { label: string; sync?: SyncMetaItem; compact?: boolean }) {
+function SyncStateLine({ label, sync, compact = false, onSync }: { label: string; sync?: SyncMetaItem; compact?: boolean; onSync?: () => void }) {
   const status = sync?.status || "idle";
   const text =
     status === "running"
@@ -524,8 +578,13 @@ function SyncStateLine({ label, sync, compact = false }: { label: string; sync?:
     <div className={`sync-state-line ${status} ${compact ? "compact" : ""}`}>
       <span className="sync-dot" aria-hidden="true" />
       <strong>{text}</strong>
-      {sync?.syncedAt ? <span>{formatSyncTime(sync.syncedAt)}</span> : null}
+      {sync?.syncedAt ? <span>{formatSyncTime(sync.syncedAt)}</span> : status === "done" ? <span>일시 기록 없음</span> : null}
       {sync?.message ? <em>{sync.message}</em> : null}
+      {onSync ? (
+        <button className="mini-sync-button" type="button" onClick={onSync} disabled={status === "running"}>
+          <RefreshCw /> 동기화
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -552,7 +611,7 @@ function EventList({
   );
 }
 
-function NoticePanel({ notices, sync, onSelect }: { notices: KnouEvent[]; sync?: SyncMetaItem; onSelect: (notice: KnouEvent) => void }) {
+function NoticePanel({ notices, sync, onSync, onSelect }: { notices: KnouEvent[]; sync?: SyncMetaItem; onSync: () => void; onSelect: (notice: KnouEvent) => void }) {
   const [page, setPage] = useState(0);
   const latestNotices = notices.slice(0, 10);
   const pageCount = Math.ceil(latestNotices.length / 5);
@@ -570,7 +629,7 @@ function NoticePanel({ notices, sync, onSelect }: { notices: KnouEvent[]; sync?:
           <h2>읽을 공지</h2>
         </div>
       </div>
-      <SyncStateLine label="공지" sync={sync} compact />
+      <SyncStateLine label="공지" sync={sync} compact onSync={onSync} />
       {!notices.length ? (
         <div className="empty notice-empty">표시할 공지가 없습니다.</div>
       ) : (
@@ -602,16 +661,20 @@ function ProfilePanel({
   profile,
   gradeEvents,
   sync,
+  gradeSync,
   onOpenGrades,
   onSynced,
   onSyncMetaChange,
+  onQuickSync,
 }: {
   profile: Profile;
   gradeEvents: KnouEvent[];
   sync?: SyncMetaItem;
+  gradeSync?: SyncMetaItem;
   onOpenGrades: () => void;
   onSynced: (payload: SyncedPayload) => void;
   onSyncMetaChange: (scope: SyncScope, item: SyncMetaItem) => void;
+  onQuickSync: (scope: SyncScope) => void;
 }) {
   const hasProfile = Boolean(profile.name || profile.department || profile.credits);
 
@@ -623,11 +686,12 @@ function ProfilePanel({
           <h2>내 상태</h2>
         </div>
       </div>
-      <SyncStateLine label="학습정보" sync={sync} compact />
+      <SyncStateLine label="학습정보" sync={sync} compact onSync={() => onQuickSync("mobile")} />
+      <SyncStateLine label="학점/성적" sync={gradeSync} compact onSync={() => onQuickSync("grades")} />
       {!hasProfile ? (
         <div className="profile-login">
           <p className="hint">로그인하면 이름, 학과, 수강목록, 학점 정보를 이 영역에 표시합니다.</p>
-          <SyncForm onSynced={onSynced} onSyncMetaChange={onSyncMetaChange} defaultScopes={["mobile"]} />
+          <SyncForm onSynced={onSynced} onSyncMetaChange={onSyncMetaChange} defaultScopes={["mobile", "grades"]} />
         </div>
       ) : (
         <>
@@ -667,7 +731,7 @@ function ProfilePanel({
   );
 }
 
-function ExamFocus({ events, sync }: { events: KnouEvent[]; sync?: SyncMetaItem }) {
+function ExamFocus({ events, sync, onSync }: { events: KnouEvent[]; sync?: SyncMetaItem; onSync: () => void }) {
   return (
     <section className="panel focus-panel exam-focus">
       <div className="panel-heading">
@@ -676,7 +740,7 @@ function ExamFocus({ events, sync }: { events: KnouEvent[]; sync?: SyncMetaItem 
           <h2>시험 일정</h2>
         </div>
       </div>
-      <SyncStateLine label="시험" sync={sync} compact />
+      <SyncStateLine label="시험" sync={sync} compact onSync={onSync} />
       {!events.length ? (
         <p className="empty compact-empty">시험 일정이 없습니다. 동기화를 실행하세요.</p>
       ) : (
@@ -1352,6 +1416,7 @@ function countScopeItems(payload: SyncedPayload, scope: SyncScope): number {
   const events = payload.events || [];
   if (scope === "exam") return events.filter((event) => event.type === "exam").length;
   if (scope === "mobile") return events.length + countProfileFields(payload.profile);
+  if (scope === "grades") return events.filter((event) => event.type === "grade").length + countProfileFields(payload.profile);
   if (scope === "notices") return events.filter((event) => event.type === "notice").length;
   return events.length;
 }
